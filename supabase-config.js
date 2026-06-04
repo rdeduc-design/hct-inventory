@@ -5,6 +5,6 @@
 // The anon/publishable key is safe to publish in a browser app when Row Level Security is enabled.
 // This app intentionally requires no login. Role controls are applied in the UI for ease of access.
 window.HCT_SUPABASE_CONFIG = {
-  url: "https://pgabnyfghllchyziiccg.supabase.co",
-  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnYWJueWZnaGxsY2h5emlpY2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwMDM2ODEsImV4cCI6MjA5MzU3OTY4MX0.VBELxDTCmNnwm80-tf2y8cZKkbyBuDUeWHjo4ANzRCg"
+  url: "https://fwvycyrvjazfoesqxuvn.supabase.co",
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3dnljeXJ2amF6Zm9lc3F4dXZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1NDcxNDIsImV4cCI6MjA5NjEyMzE0Mn0.nJFKsWR0GguN71wxHRZB8YyiCAuyRKTUEqVUMgdq2Ss"
 };
