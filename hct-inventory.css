@@ -249,6 +249,14 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.vr-tracking-fields {
+  display: contents;
+}
+
+.vr-tracking-fields.hidden {
+  display: none;
+}
+
 .field > span {
   color: var(--muted);
   font-size: 0.78rem;
@@ -258,7 +266,9 @@ button:disabled {
 .field input,
 .field select,
 .field textarea,
-.searchbox {
+.searchbox,
+.request-cart-row input,
+.request-cart-row select {
   width: 100%;
   min-height: 40px;
   border: 1px solid var(--line);
@@ -650,12 +660,13 @@ td {
 
 .request-cart-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(82px, 0.32fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(74px, 0.35fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto;
   gap: 8px;
   align-items: center;
 }
 
-.request-cart-row input {
+.request-cart-row input,
+.request-cart-row select {
   width: 100%;
 }
 

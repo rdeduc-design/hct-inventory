@@ -92,6 +92,7 @@ create table if not exists public.hct_requests (
   item_requested text not null,
   quantity_requested numeric not null check (quantity_requested > 0),
   request_items jsonb not null default '[]'::jsonb,
+  request_type text not null default 'Deployment' check (request_type in ('Deployment', 'Procurement')),
   reason text,
   priority_level text not null default 'Medium' check (priority_level in ('Low', 'Medium', 'High', 'Urgent')),
   status text not null default 'Pending' check (status in ('Pending', 'Approved', 'Released', 'Denied', 'Returned')),
@@ -108,10 +109,22 @@ alter table public.hct_requests
 add column if not exists position text not null default 'Simulationist',
 add column if not exists designation text,
 add column if not exists immediate_superior text,
-add column if not exists request_items jsonb not null default '[]'::jsonb;
+add column if not exists request_items jsonb not null default '[]'::jsonb,
+add column if not exists request_type text not null default 'Deployment';
 
 alter table public.hct_requests
 alter column reason drop not null;
+
+update public.hct_requests
+set request_type = 'Deployment'
+where request_type is null or request_type not in ('Deployment', 'Procurement');
+
+alter table public.hct_requests
+drop constraint if exists hct_requests_request_type_check;
+
+alter table public.hct_requests
+add constraint hct_requests_request_type_check
+check (request_type in ('Deployment', 'Procurement'));
 
 create table if not exists public.hct_request_history (
   id uuid primary key default gen_random_uuid(),
@@ -191,152 +204,216 @@ alter table public.hct_requests enable row level security;
 alter table public.hct_request_history enable row level security;
 alter table public.hct_audit_logs enable row level security;
 
-grant usage on schema public to anon, authenticated;
-grant select, insert, update on table public.hct_inventory_items to anon, authenticated;
-grant select, insert, update on table public.hct_inventory_pieces to anon, authenticated;
-grant select, insert, update on table public.hct_inventory_transactions to anon, authenticated;
-grant select, insert, update on table public.hct_vr_assets to anon, authenticated;
-grant select, insert, update on table public.hct_requests to anon, authenticated;
-grant select, insert, update on table public.hct_request_history to anon, authenticated;
-grant select, insert on table public.hct_audit_logs to anon, authenticated;
+grant usage on schema public to authenticated;
+revoke all on table public.hct_inventory_items from anon;
+revoke all on table public.hct_inventory_pieces from anon;
+revoke all on table public.hct_inventory_transactions from anon;
+revoke all on table public.hct_vr_assets from anon;
+revoke all on table public.hct_requests from anon;
+revoke all on table public.hct_request_history from anon;
+revoke all on table public.hct_audit_logs from anon;
+grant select, insert, update on table public.hct_inventory_items to authenticated;
+grant select, insert, update on table public.hct_inventory_pieces to authenticated;
+grant select, insert, update on table public.hct_inventory_transactions to authenticated;
+grant select, insert, update on table public.hct_vr_assets to authenticated;
+grant select, insert, update on table public.hct_requests to authenticated;
+grant select, insert, update on table public.hct_request_history to authenticated;
+grant select, insert on table public.hct_audit_logs to authenticated;
+
+create or replace function public.hct_user_role()
+returns text
+language sql
+stable
+as $$
+  select coalesce(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer');
+$$;
+
+create or replace function public.hct_assigned_room()
+returns text
+language sql
+stable
+as $$
+  select coalesce(auth.jwt() -> 'user_metadata' ->> 'assignedRoom', 'All');
+$$;
+
+create or replace function public.hct_profile_name()
+returns text
+language sql
+stable
+as $$
+  select coalesce(auth.jwt() -> 'user_metadata' ->> 'name', auth.jwt() ->> 'email', auth.uid()::text);
+$$;
+
+create or replace function public.hct_can_manage_inventory(target_room text)
+returns boolean
+language sql
+stable
+as $$
+  select public.hct_user_role() in ('admin', 'supply_officer')
+    or (
+      public.hct_user_role() = 'room_custodian'
+      and (public.hct_assigned_room() = 'All' or public.hct_assigned_room() = target_room)
+    );
+$$;
 
 drop policy if exists "Public can read inventory" on public.hct_inventory_items;
-create policy "Public can read inventory"
+drop policy if exists "Public can add inventory" on public.hct_inventory_items;
+drop policy if exists "Public can update inventory" on public.hct_inventory_items;
+drop policy if exists "Authenticated can read inventory" on public.hct_inventory_items;
+create policy "Authenticated can read inventory"
 on public.hct_inventory_items
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add inventory" on public.hct_inventory_items;
-create policy "Public can add inventory"
+drop policy if exists "Role can add inventory" on public.hct_inventory_items;
+create policy "Role can add inventory"
 on public.hct_inventory_items
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_can_manage_inventory(room_code));
 
-drop policy if exists "Public can update inventory" on public.hct_inventory_items;
-create policy "Public can update inventory"
+drop policy if exists "Role can update inventory" on public.hct_inventory_items;
+create policy "Role can update inventory"
 on public.hct_inventory_items
 for update
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (public.hct_can_manage_inventory(room_code))
+with check (public.hct_can_manage_inventory(room_code));
 
 drop policy if exists "Public can read inventory pieces" on public.hct_inventory_pieces;
-create policy "Public can read inventory pieces"
+drop policy if exists "Public can add inventory pieces" on public.hct_inventory_pieces;
+drop policy if exists "Public can update inventory pieces" on public.hct_inventory_pieces;
+drop policy if exists "Authenticated can read inventory pieces" on public.hct_inventory_pieces;
+create policy "Authenticated can read inventory pieces"
 on public.hct_inventory_pieces
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add inventory pieces" on public.hct_inventory_pieces;
-create policy "Public can add inventory pieces"
+drop policy if exists "Role can add inventory pieces" on public.hct_inventory_pieces;
+create policy "Role can add inventory pieces"
 on public.hct_inventory_pieces
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_can_manage_inventory(current_room_code));
 
-drop policy if exists "Public can update inventory pieces" on public.hct_inventory_pieces;
-create policy "Public can update inventory pieces"
+drop policy if exists "Role can update inventory pieces" on public.hct_inventory_pieces;
+create policy "Role can update inventory pieces"
 on public.hct_inventory_pieces
 for update
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (public.hct_can_manage_inventory(current_room_code))
+with check (public.hct_can_manage_inventory(current_room_code));
 
 drop policy if exists "Public can read transactions" on public.hct_inventory_transactions;
-create policy "Public can read transactions"
+drop policy if exists "Public can add transactions" on public.hct_inventory_transactions;
+drop policy if exists "Public can update transactions" on public.hct_inventory_transactions;
+drop policy if exists "Authenticated can read transactions" on public.hct_inventory_transactions;
+create policy "Authenticated can read transactions"
 on public.hct_inventory_transactions
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add transactions" on public.hct_inventory_transactions;
-create policy "Public can add transactions"
+drop policy if exists "Role can add transactions" on public.hct_inventory_transactions;
+create policy "Role can add transactions"
 on public.hct_inventory_transactions
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (
+  public.hct_user_role() in ('admin', 'supply_officer', 'room_custodian')
+);
 
-drop policy if exists "Public can update transactions" on public.hct_inventory_transactions;
-create policy "Public can update transactions"
+drop policy if exists "Role can update transactions" on public.hct_inventory_transactions;
+create policy "Role can update transactions"
 on public.hct_inventory_transactions
 for update
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (public.hct_user_role() in ('admin', 'supply_officer'))
+with check (public.hct_user_role() in ('admin', 'supply_officer'));
 
 drop policy if exists "Public can read VR assets" on public.hct_vr_assets;
-create policy "Public can read VR assets"
+drop policy if exists "Public can add VR assets" on public.hct_vr_assets;
+drop policy if exists "Public can update VR assets" on public.hct_vr_assets;
+drop policy if exists "Authenticated can read VR assets" on public.hct_vr_assets;
+create policy "Authenticated can read VR assets"
 on public.hct_vr_assets
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add VR assets" on public.hct_vr_assets;
-create policy "Public can add VR assets"
+drop policy if exists "Role can add VR assets" on public.hct_vr_assets;
+create policy "Role can add VR assets"
 on public.hct_vr_assets
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_can_manage_inventory(coalesce(assigned_room_code, '3F-VR')));
 
-drop policy if exists "Public can update VR assets" on public.hct_vr_assets;
-create policy "Public can update VR assets"
+drop policy if exists "Role can update VR assets" on public.hct_vr_assets;
+create policy "Role can update VR assets"
 on public.hct_vr_assets
 for update
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (public.hct_can_manage_inventory(coalesce(assigned_room_code, '3F-VR')))
+with check (public.hct_can_manage_inventory(coalesce(assigned_room_code, '3F-VR')));
 
 drop policy if exists "Public can read requests" on public.hct_requests;
-create policy "Public can read requests"
+drop policy if exists "Public can add requests" on public.hct_requests;
+drop policy if exists "Public can update requests" on public.hct_requests;
+drop policy if exists "Authenticated can read requests" on public.hct_requests;
+create policy "Authenticated can read requests"
 on public.hct_requests
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add requests" on public.hct_requests;
-create policy "Public can add requests"
+drop policy if exists "Authenticated can add requests" on public.hct_requests;
+create policy "Authenticated can add requests"
 on public.hct_requests
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_user_role() <> 'viewer');
 
-drop policy if exists "Public can update requests" on public.hct_requests;
-create policy "Public can update requests"
+drop policy if exists "Role can update requests" on public.hct_requests;
+create policy "Role can update requests"
 on public.hct_requests
 for update
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (public.hct_user_role() = 'admin' or (status = 'Pending' and created_by = public.hct_profile_name()))
+with check (public.hct_user_role() = 'admin' or (status = 'Pending' and created_by = public.hct_profile_name()));
 
 drop policy if exists "Public can read request history" on public.hct_request_history;
-create policy "Public can read request history"
+drop policy if exists "Public can add request history" on public.hct_request_history;
+drop policy if exists "Authenticated can read request history" on public.hct_request_history;
+create policy "Authenticated can read request history"
 on public.hct_request_history
 for select
-to anon, authenticated
+to authenticated
 using (true);
 
-drop policy if exists "Public can add request history" on public.hct_request_history;
-create policy "Public can add request history"
+drop policy if exists "Authenticated can add request history" on public.hct_request_history;
+create policy "Authenticated can add request history"
 on public.hct_request_history
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_user_role() <> 'viewer');
 
 drop policy if exists "Public can read audit logs" on public.hct_audit_logs;
-create policy "Public can read audit logs"
+drop policy if exists "Public can add audit logs" on public.hct_audit_logs;
+drop policy if exists "Authenticated can read audit logs" on public.hct_audit_logs;
+create policy "Authenticated can read audit logs"
 on public.hct_audit_logs
 for select
-to anon, authenticated
-using (true);
+to authenticated
+using (public.hct_user_role() in ('admin', 'supply_officer'));
 
-drop policy if exists "Public can add audit logs" on public.hct_audit_logs;
-create policy "Public can add audit logs"
+drop policy if exists "Authenticated can add audit logs" on public.hct_audit_logs;
+create policy "Authenticated can add audit logs"
 on public.hct_audit_logs
 for insert
-to anon, authenticated
-with check (true);
+to authenticated
+with check (public.hct_user_role() <> 'viewer');
 
 do $$
 declare
