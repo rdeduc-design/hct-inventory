@@ -88,6 +88,10 @@
     await loadData();
     processDeepLink();
     wireRealtime();
+    if (!state.authUser) {
+      state.view = "login";
+      state.viewArg = null;
+    }
     render();
   }
 
@@ -167,7 +171,7 @@
     state.authUser = null;
     localStorage.removeItem("hct-auth-user");
     notify("Signed out.");
-    navigate("home");
+    navigate("login");
   }
 
   async function loadData() {
@@ -218,6 +222,7 @@
   function render() {
     app.innerHTML = `
       ${topbar()}
+      ${state.authUser ? breadcrumb() : ""}
       <main class="page">
         ${state.loading ? emptyState("Loading inventory system", "Fetching shared records.") : route()}
       </main>
@@ -226,33 +231,67 @@
     bindViewEvents();
   }
 
+  function breadcrumb() {
+    const crumbs = [{ label: "Home", view: "home" }];
+    if (state.view === "all") crumbs.push({ label: "All Inventory" });
+    else if (state.view === "dashboard") crumbs.push({ label: "Dashboard" });
+    else if (state.view === "vr") crumbs.push({ label: "VR Registry" });
+    else if (state.view === "requests") crumbs.push({ label: "Procurement Requests" });
+    else if (state.view === "audit") crumbs.push({ label: "Audit Log" });
+    else if (state.view === "deleted") crumbs.push({ label: "Restore Deleted" });
+    else if (state.view === "floor") {
+      crumbs.push({ label: state.viewArg || "Floor" });
+    } else if (state.view === "room") {
+      const room = getRoom(state.viewArg);
+      if (room) {
+        crumbs.push({ label: room.floor, view: "floor", arg: room.floor });
+        crumbs.push({ label: room.name });
+      }
+    } else if (state.view === "itemDetail") {
+      const item = findById(state.data.inventory, state.viewArg);
+      crumbs.push({ label: "Item Detail" });
+      if (item) crumbs.push({ label: item.item_name });
+    } else if (state.view === "vrDetail") {
+      crumbs.push({ label: "VR Registry", view: "vr" });
+      const asset = findById(state.data.vr, state.viewArg);
+      if (asset) crumbs.push({ label: asset.vr_number });
+    }
+    if (crumbs.length <= 1) return "";
+    return `<nav class="breadcrumb" aria-label="Breadcrumb">${crumbs.map((crumb, i) => {
+      const isLast = i === crumbs.length - 1;
+      if (isLast) return `<span class="bc-current">${escapeHtml(crumb.label)}</span>`;
+      return `<button class="bc-link" data-bc-view="${escapeAttr(crumb.view || "home")}" data-bc-arg="${escapeAttr(crumb.arg || "")}">${escapeHtml(crumb.label)}</button><span class="bc-sep">›</span>`;
+    }).join("")}</nav>`;
+  }
+
   function topbar() {
-    const navItems = [
+    const authedNavItems = [
       ["home", "Home"],
       ["dashboard", "Dashboard"],
       ["all", "All Inventory"],
       ["vr", "VR Registry"],
-      ["requests", "Requests"],
+      ["requests", "Procurement Requests"],
       ["audit", "Audit Log"],
       ["deleted", "Restore"]
     ];
     const dbText = state.dbReady ? "Cloud sync active" : "Local preview";
-    const authText = state.authUser ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "Guest access";
+    const authText = state.authUser ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "";
     return `
       <header class="topbar">
         <div class="brand">
           <img class="brand-logo" src="${document.body.classList.contains("dark") ? "hct-logo-teal.png" : "hct-logo-navy.png"}" alt="HCT Institute logo">
           <div>
             <h1>HCT Institute</h1>
-            <span>${dbText} - ${escapeHtml(currentRoleLabel())} - ${authText}</span>
+            <span>${dbText}${state.authUser ? ` - ${escapeHtml(currentRoleLabel())} - ${authText}` : ""}</span>
           </div>
         </div>
         <nav class="nav" aria-label="Main navigation">
-          ${navItems.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
-          ${state.authUser ? `<button data-sign-out>Sign Out</button>` : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
+          ${state.authUser
+            ? authedNavItems.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("") + `<button data-sign-out>Sign Out</button>`
+            : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
         </nav>
         <div class="top-actions">
-          <button class="icon-button" data-profile title="Access profile">&#x263A;</button>
+          ${state.authUser ? `<button class="icon-button" data-profile title="Access profile">&#x263A;</button>` : ""}
           <button class="icon-button" data-theme title="Toggle dark mode">&#x25D0;</button>
         </div>
       </header>
@@ -429,7 +468,7 @@
     const requests = filteredRequests();
     const canCreate = canCreateRequest();
     return `
-      ${sectionHead("Request Form", "Create requests, update request status, and view shared request history.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request ${canCreate ? "" : "disabled"}>New Request</button>`)}
+      ${sectionHead("Procurement Request Form", "Create procurement requests, update request status, and view shared request history.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request ${canCreate ? "" : "disabled"}>New Request</button>`)}
       <div class="toolbar">
         <input class="searchbox" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="Search requester, department, item, reason">
         <select data-filter="requestStatus">${optionHtml(["All"].concat(REQUEST_STATUSES), state.filters.requestStatus)}</select>
@@ -441,11 +480,16 @@
   }
 
   function auditView() {
-    const rows = state.data.audit;
+    const rows = state.data.audit.filter((row) => {
+      if (row.record_type === "inventory item") {
+        return row.action_type === "created" || row.action_type === "deleted" || row.action_type === "transferred";
+      }
+      return false;
+    });
     return `
-      ${sectionHead("Audit Log", "Application activity showing action type, record type, old value, new value, changed by, and timestamp.", `<button class="btn" data-export="audit">Excel</button>`)}
+      ${sectionHead("Audit Log", "Records of inventory item additions, deletions, and transfers.", `<button class="btn" data-export="audit">Excel</button>`)}
       <section class="panel">
-        ${rows.length ? auditTable(rows) : emptyState("No audit events yet", "Changes, exports, approvals, releases, deletes, and restores are logged here.")}
+        ${rows.length ? auditTable(rows) : emptyState("No audit events yet", "Inventory additions, deletions, and transfers are logged here.")}
       </section>
     `;
   }
@@ -461,13 +505,18 @@
   }
 
   function profileCard() {
+    const isSupabaseAuth = !!(state.authUser?.id);
     return `
       <aside class="profile-card">
         <h3>Access profile</h3>
         <div class="form-grid">
-          <label class="field full"><span>Name</span><input data-profile-field="name" value="${escapeAttr(state.profile.name)}" placeholder="Guest user"></label>
-          <label class="field full"><span>Role</span><select data-profile-field="role">${ROLES.map((role) => `<option value="${role.value}" ${role.value === state.profile.role ? "selected" : ""}>${role.label}</option>`).join("")}</select></label>
-          <label class="field full"><span>Assigned room</span><select data-profile-field="assignedRoom">${optionHtml(["All"].concat(ROOMS.map((room) => room.code)), state.profile.assignedRoom, roomLabel)}</select></label>
+          <label class="field full"><span>Name</span><input data-profile-field="name" value="${escapeAttr(state.profile.name)}" placeholder="Guest user" ${isSupabaseAuth ? "readonly" : ""}></label>
+          <label class="field full"><span>Role</span>${isSupabaseAuth
+            ? `<input value="${escapeAttr(currentRoleLabel())}" readonly>`
+            : `<select data-profile-field="role">${ROLES.map((role) => `<option value="${role.value}" ${role.value === state.profile.role ? "selected" : ""}>${role.label}</option>`).join("")}</select>`}
+          </label>
+          <label class="field full"><span>Assigned room</span><select data-profile-field="assignedRoom" ${isSupabaseAuth ? "disabled" : ""}>${optionHtml(["All"].concat(ROOMS.map((room) => room.code)), state.profile.assignedRoom, roomLabel)}</select></label>
+          ${isSupabaseAuth ? `<p class="field full muted" style="font-size:0.78rem;margin:0">Role and name are set from your Supabase account.</p>` : ""}
         </div>
       </aside>
     `;
@@ -534,27 +583,55 @@
             <th>Item</th><th>Category</th><th>Qty</th><th>Status</th><th>Room</th><th>Asset Tag</th><th>Dates</th><th>Remarks</th><th>Actions</th>
           </tr></thead>
           <tbody>
-            ${items.map((item) => `
-              <tr>
-                <td><b>${escapeHtml(item.item_name)}</b><br><span class="muted">${escapeHtml(item.unit_measure || "")}</span></td>
-                <td>${badge(item.category)}</td>
-                <td class="compact-cell"><b>${Number(item.quantity || 0)}</b></td>
-                <td>${statusBadge(item.functional_status)}</td>
-                <td>${escapeHtml(roomLabel(item.room_code))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
-                <td>${escapeHtml(item.asset_tag || "")}</td>
-                <td><span class="muted">Added</span> ${dateOnly(item.date_added)}<br><span class="muted">Updated</span> ${dateTime(item.last_updated)}</td>
-                <td>${escapeHtml(item.remarks || "")}</td>
-                <td class="table-actions">
-                  <button class="btn" data-qr-item="${item.id}">QR</button>
-                  ${deletedMode ? `<button class="btn success" data-restore-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Restore</button>` : ""}
-                  ${showActions ? `<button class="btn" data-transaction="${item.id}" ${canTransact(item) ? "" : "disabled"}>Move</button><button class="btn" data-edit-item="${item.id}" ${canEditInventory(item.room_code) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Delete</button>` : ""}
-                </td>
-              </tr>
-            `).join("")}
+            ${items.map((item) => inventoryRow(item, showActions, deletedMode)).join("")}
           </tbody>
         </table>
       </div>
     `;
+  }
+
+  function inventoryRow(item, showActions, deletedMode) {
+    const qty = Number(item.quantity || 0);
+    const hasMultiple = qty > 1;
+    const safeId = item.id.replace(/[^a-z0-9]/gi, "");
+    const collapseId = `pieces-${safeId}`;
+    const mainRow = `
+      <tr class="${hasMultiple ? "has-pieces" : ""}">
+        <td>
+          ${hasMultiple ? `<button class="btn-toggle-pieces" data-toggle="${escapeAttr(collapseId)}" title="Show ${qty} individual pieces">&#x25B6;</button>` : ""}
+          <b>${escapeHtml(item.item_name)}</b><br>
+          <span class="muted">${escapeHtml(item.unit_measure || "")}</span>
+        </td>
+        <td>${badge(item.category)}</td>
+        <td class="compact-cell"><b>${qty}</b></td>
+        <td>${statusBadge(item.functional_status)}</td>
+        <td>${escapeHtml(roomLabel(item.room_code))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
+        <td>${escapeHtml(item.asset_tag || "")}</td>
+        <td><span class="muted">Added</span> ${dateOnly(item.date_added)}<br><span class="muted">Updated</span> ${dateTime(item.last_updated)}</td>
+        <td>${escapeHtml(item.remarks || "")}</td>
+        <td class="table-actions">
+          <button class="btn" data-qr-item="${item.id}">QR</button>
+          ${deletedMode ? `<button class="btn success" data-restore-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Restore</button>` : ""}
+          ${showActions ? `<button class="btn" data-transaction="${item.id}" ${canTransact(item) ? "" : "disabled"}>Move</button><button class="btn" data-edit-item="${item.id}" ${canEditInventory(item.room_code) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Delete</button>` : ""}
+        </td>
+      </tr>
+    `;
+    if (!hasMultiple) return mainRow;
+    const pieceRows = Array.from({ length: qty }, (_, i) => {
+      const num = i + 1;
+      const pieceTag = item.asset_tag ? `${item.asset_tag}-${String(num).padStart(3, "0")}` : `${item.id.slice(0, 8)}-${String(num).padStart(3, "0")}`;
+      return `
+        <tr class="piece-row" data-pieces="${escapeAttr(collapseId)}" style="display:none">
+          <td class="piece-cell"><span class="piece-num">Piece ${num}</span></td>
+          <td colspan="4"><span class="piece-tag">&#x1F3F7; ${escapeHtml(pieceTag)}</span></td>
+          <td></td><td></td><td></td>
+          <td class="table-actions">
+            <button class="btn" data-qr-piece-tag="${escapeAttr(pieceTag)}" data-qr-piece-item="${item.id}" data-qr-piece-num="${num}">QR</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    return mainRow + pieceRows;
   }
 
   function transactionsPanel(roomCode) {
@@ -611,7 +688,15 @@
               <td>${requestBadge(row.status)}</td>
               <td>${dateOnly(row.date_requested)}</td>
               <td>${escapeHtml(row.reason || "")}</td>
-              <td class="table-actions"><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button></td>
+              <td class="table-actions">
+                <button class="btn" data-history-request="${row.id}">History</button>
+                <button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button>
+                ${canManageRequests() ? `
+                  <button class="btn success" data-approve-request="${row.id}" ${row.status === "Approved" || row.status === "Released" ? "disabled" : ""}>Approve</button>
+                  <button class="btn danger" data-deny-request="${row.id}" ${row.status === "Denied" ? "disabled" : ""}>Deny</button>
+                  <button class="btn" data-status-request="${row.id}">Status</button>
+                ` : ""}
+              </td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
@@ -622,19 +707,68 @@
     return `
       <div class="table-wrap">
         <table data-table="audit">
-          <thead><tr><th>Action</th><th>Record Type</th><th>Changed By</th><th>Timestamp</th><th>Old Value</th><th>New Value</th></tr></thead>
+          <thead><tr><th>Action</th><th>Item</th><th>Asset Tag</th><th>Changed By</th><th>Timestamp</th><th>Old Value</th><th>New Value</th></tr></thead>
           <tbody>${rows.map((row) => `
             <tr>
-              <td>${badge(row.action_type)}</td>
-              <td>${escapeHtml(row.record_type || "")}</td>
+              <td>${badge(auditActionLabel(row.action_type))}</td>
+              <td>${escapeHtml(auditItemName(row))}</td>
+              <td><span class="muted">${escapeHtml(auditAssetTag(row))}</span></td>
               <td>${escapeHtml(row.changed_by || "")}<br><span class="muted">${escapeHtml(row.changed_role || "")}</span></td>
               <td>${dateTime(row.created_at)}</td>
-              <td><div class="audit-value">${escapeHtml(auditSummary(row.old_value))}</div></td>
-              <td><div class="audit-value">${escapeHtml(auditSummary(row.new_value))}</div></td>
+              <td><div class="audit-value">${escapeHtml(auditOldLabel(row))}</div></td>
+              <td><div class="audit-value">${escapeHtml(auditNewLabel(row))}</div></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
     `;
+  }
+
+  function auditActionLabel(type) {
+    if (type === "created") return "Addition";
+    if (type === "deleted") return "Deletion";
+    if (type === "transferred") return "Transfer";
+    return type || "";
+  }
+
+  function auditItemName(row) {
+    const v = row.new_value || row.old_value;
+    return v?.item_name || "";
+  }
+
+  function auditAssetTag(row) {
+    const v = row.new_value || row.old_value;
+    if (row.action_type === "transferred") return v?.asset_tag || "";
+    return v?.asset_tag || "";
+  }
+
+  function auditOldLabel(row) {
+    if (row.action_type === "created") return "—";
+    if (row.action_type === "deleted") {
+      const v = row.old_value;
+      if (!v) return "—";
+      return `Item: ${v.item_name || ""}; Qty: ${v.quantity ?? "—"}; Tag: ${v.asset_tag || "—"}`;
+    }
+    if (row.action_type === "transferred") {
+      const v = row.old_value;
+      if (!v) return "—";
+      return `Qty: ${v.quantity ?? "—"}; From: ${roomLabel(v.from)}`;
+    }
+    return auditSummary(row.old_value);
+  }
+
+  function auditNewLabel(row) {
+    if (row.action_type === "deleted") return "—";
+    if (row.action_type === "created") {
+      const v = row.new_value;
+      if (!v) return "—";
+      return `Item: ${v.item_name || ""}; Qty: ${v.quantity ?? "—"}; Tag: ${v.asset_tag || "—"}`;
+    }
+    if (row.action_type === "transferred") {
+      const v = row.new_value;
+      if (!v) return "—";
+      return `Qty: ${v.quantity ?? "—"}; To: ${roomLabel(v.to)}`;
+    }
+    return auditSummary(row.new_value);
   }
 
   function bindGlobalEvents() {
@@ -643,6 +777,12 @@
     app.querySelector("[data-profile]")?.addEventListener("click", openProfileModal);
     app.querySelector("[data-sign-out]")?.addEventListener("click", signOut);
     app.querySelectorAll("[data-profile-field]").forEach((field) => field.addEventListener("change", updateProfileFromField));
+    app.querySelectorAll("[data-bc-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const arg = button.dataset.bcArg || null;
+        navigate(button.dataset.bcView, arg || undefined);
+      });
+    });
   }
 
   function bindViewEvents() {
@@ -660,11 +800,38 @@
     app.querySelectorAll("[data-add-request]").forEach((el) => el.addEventListener("click", () => openRequestModal()));
     app.querySelectorAll("[data-edit-request]").forEach((el) => el.addEventListener("click", () => openRequestModal(findById(state.data.requests, el.dataset.editRequest))));
     app.querySelectorAll("[data-history-request]").forEach((el) => el.addEventListener("click", () => openRequestHistory(el.dataset.historyRequest)));
+    app.querySelectorAll("[data-approve-request]").forEach((el) => el.addEventListener("click", () => quickUpdateRequestStatus(el.dataset.approveRequest, "Approved", "")));
+    app.querySelectorAll("[data-deny-request]").forEach((el) => el.addEventListener("click", () => quickUpdateRequestStatus(el.dataset.denyRequest, "Denied", "")));
+    app.querySelectorAll("[data-status-request]").forEach((el) => el.addEventListener("click", () => openRequestStatusModal(el.dataset.statusRequest)));
     app.querySelectorAll("[data-add-vr]").forEach((el) => el.addEventListener("click", () => openVrModal()));
     app.querySelectorAll("[data-edit-vr]").forEach((el) => el.addEventListener("click", () => openVrModal(findById(state.data.vr, el.dataset.editVr))));
     app.querySelectorAll("[data-qr-item]").forEach((el) => el.addEventListener("click", () => openQr("Inventory Item", itemQrPayload(findById(state.data.inventory, el.dataset.qrItem)))));
     app.querySelectorAll("[data-qr-vr]").forEach((el) => el.addEventListener("click", () => openQr("VR Asset", vrQrPayload(findById(state.data.vr, el.dataset.qrVr)))));
     app.querySelectorAll("[data-qr-room]").forEach((el) => el.addEventListener("click", () => openQr("Room Inventory", roomQrPayload(el.dataset.qrRoom))));
+    app.querySelectorAll("[data-qr-piece-tag]").forEach((el) => el.addEventListener("click", () => {
+      const pieceTag = el.dataset.qrPieceTag;
+      const pieceNum = el.dataset.qrPieceNum;
+      const item = findById(state.data.inventory, el.dataset.qrPieceItem);
+      const payload = {
+        type: "inventory_piece",
+        code: pieceTag,
+        assetTag: pieceTag,
+        label: item ? `${item.item_name} — Piece ${pieceNum}` : `Piece ${pieceNum}`,
+        room: item ? roomLabel(item.room_code) : "",
+        url: item ? deepLink("item", item.id) : ""
+      };
+      openQr("Inventory Piece", payload);
+    }));
+    app.querySelectorAll("[data-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const id = button.dataset.toggle;
+        const rows = app.querySelectorAll(`[data-pieces="${id}"]`);
+        const expanded = button.classList.contains("expanded");
+        rows.forEach((row) => { row.style.display = expanded ? "none" : "table-row"; });
+        button.classList.toggle("expanded", !expanded);
+        button.innerHTML = expanded ? "&#x25B6;" : "&#x25BC;";
+      });
+    });
     app.querySelectorAll("[data-print-room]").forEach((el) => el.addEventListener("click", () => printRoomReport(el.dataset.printRoom)));
     app.querySelectorAll("[data-export]").forEach((el) => el.addEventListener("click", () => exportView(el.dataset.export)));
     app.querySelectorAll("[data-pdf]").forEach((el) => el.addEventListener("click", () => exportPdf(el.dataset.pdf)));
@@ -672,6 +839,14 @@
   }
 
   function navigate(view, arg) {
+    const publicViews = ["login", "signup"];
+    if (!state.authUser && !publicViews.includes(view)) {
+      state.view = "login";
+      state.viewArg = null;
+      state.filters.search = "";
+      render();
+      return;
+    }
     state.view = view;
     state.viewArg = arg || null;
     state.filters.search = "";
@@ -831,11 +1006,22 @@
     const oldItem = { ...item };
     let nextQty = Number(item.quantity || 0);
     if (adjustQuantity) {
-      if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") nextQty += quantity;
-      if (tx.transaction_type === "Stock Out" || tx.transaction_type === "Transfer") nextQty -= quantity;
-      if (nextQty < 0) return notify("Movement cannot reduce quantity below zero.");
-      await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
-      if (tx.transaction_type === "Transfer" && tx.destination_room_code) await receiveTransfer(item, quantity, tx.destination_room_code);
+      if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") {
+        nextQty += quantity;
+        await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
+      } else if (tx.transaction_type === "Stock Out") {
+        nextQty -= quantity;
+        if (nextQty < 0) return notify("Movement cannot reduce quantity below zero.");
+        await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
+      } else if (tx.transaction_type === "Transfer") {
+        if (tx.destination_room_code) {
+          await receiveTransfer(item, quantity, tx.destination_room_code);
+          await logAudit("transferred", "inventory item", item.id,
+            { item_name: item.item_name, quantity, from: tx.source_room_code || item.room_code, asset_tag: item.asset_tag },
+            { item_name: item.item_name, quantity, to: tx.destination_room_code }
+          );
+        }
+      }
     }
     const payload = {
       inventory_item_id: item.id,
@@ -857,7 +1043,7 @@
     const room = getRoom(destinationRoomCode);
     const existing = activeInventory().find((row) => row.room_code === destinationRoomCode && row.item_name.toLowerCase() === item.item_name.toLowerCase() && row.category === item.category && row.unit_measure === item.unit_measure);
     if (existing) {
-      await updateRecord(TABLES.inventory, existing.id, { quantity: Number(existing.quantity || 0) + quantity, last_updated: new Date().toISOString() }, "edited", "inventory item", existing, { movement: "Transfer received" });
+      await updateRecord(TABLES.inventory, existing.id, { quantity: Number(existing.quantity || 0) + quantity, last_updated: new Date().toISOString() }, "edited", "inventory item", existing, { movement: "Transfer received" }, false);
     } else {
       await insertRecord(TABLES.inventory, {
         item_name: item.item_name,
@@ -873,12 +1059,12 @@
         date_added: today(),
         last_updated: new Date().toISOString(),
         remarks: `Transferred from ${roomLabel(item.room_code)}`
-      }, "created", "inventory item");
+      }, "created", "inventory item", false);
     }
   }
 
   function openRequestModal(request) {
-    openModal(`${request ? "Edit" : "New"} Request`, `
+    openModal(`${request ? "Edit" : "New"} Procurement Request`, `
       <form id="request-form" class="modal-body">
         <div class="form-grid">
           ${field("Requester Name", `<input name="requester_name" required value="${escapeAttr(request?.requester_name || profileName())}">`)}
@@ -995,16 +1181,16 @@
     return data;
   }
 
-  async function updateRecord(table, id, payload, action, recordType, oldValue, extraNewValue) {
+  async function updateRecord(table, id, payload, action, recordType, oldValue, extraNewValue, audit = true) {
     const enriched = { ...payload, updated_by: profileName() };
     if (state.supabase && state.dbReady) {
       const { data, error } = await state.supabase.from(table).update(enriched).eq("id", id).select().single();
       if (error) return fail(error);
-      await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+      if (audit) await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
       return data;
     }
     const data = localUpdate(table, id, enriched);
-    await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+    if (audit) await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
     return data;
   }
 
@@ -1041,6 +1227,46 @@
       </div>
       <div class="modal-actions"><button class="btn primary" data-close-modal>Done</button></div>
     `);
+  }
+
+  function openRequestStatusModal(id) {
+    const request = findById(state.data.requests, id);
+    if (!request) return;
+    openModal("Update Request Status", `
+      <form id="status-form" class="modal-body">
+        <div class="form-grid">
+          <div class="field full"><span>Item Requested</span><p><b>${escapeHtml(request.item_requested)}</b> by ${escapeHtml(request.requester_name)}</p></div>
+          ${field("Current Status", `<input value="${escapeAttr(request.status)}" disabled>`)}
+          ${field("New Status", `<select name="status">${optionHtml(REQUEST_STATUSES, request.status)}</select>`)}
+          ${field("Note", `<textarea name="note" placeholder="Optional note for this status change"></textarea>`, true)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="status-form">Update Status</button>
+      </div>
+    `);
+    document.getElementById("status-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const newStatus = form.get("status");
+      const note = clean(form.get("note"));
+      await quickUpdateRequestStatus(id, newStatus, note);
+      closeModal();
+    });
+  }
+
+  async function quickUpdateRequestStatus(id, newStatus, note) {
+    const request = findById(state.data.requests, id);
+    if (!request) return;
+    const oldStatus = request.status;
+    if (oldStatus === newStatus) return notify(`Request is already ${newStatus}.`);
+    const payload = { status: newStatus, updated_at: new Date().toISOString() };
+    const saved = await updateRecord(TABLES.requests, id, payload, statusAction(oldStatus, newStatus), "request", request);
+    if (saved) await addRequestHistory(id, oldStatus, newStatus, note || `Status changed to ${newStatus} by ${profileName()}`);
+    await loadData();
+    render();
+    notify(`Request status updated to ${newStatus}.`);
   }
 
   function openProfileModal() {

@@ -750,8 +750,102 @@ td {
   }
 }
 
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px clamp(14px, 3vw, 34px);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.82rem;
+  flex-wrap: wrap;
+}
+
+.bc-link {
+  border: 0;
+  background: none;
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  padding: 0;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bc-link:hover {
+  color: var(--accent);
+}
+
+.bc-sep {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.bc-current {
+  color: var(--muted);
+}
+
+.btn-toggle-pieces {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--primary-strong);
+  font-size: 0.65rem;
+  cursor: pointer;
+  margin-right: 6px;
+  vertical-align: middle;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.btn-toggle-pieces:hover {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
+  border-color: var(--primary);
+}
+
+.btn-toggle-pieces.expanded {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
+  border-color: var(--primary);
+}
+
+.piece-row td {
+  background: color-mix(in srgb, var(--primary) 4%, var(--surface));
+  border-bottom: 1px solid var(--line);
+}
+
+.piece-cell {
+  padding-left: 36px !important;
+}
+
+.piece-num {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.piece-tag {
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, monospace;
+  font-size: 0.84rem;
+  color: var(--primary-strong);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border-radius: 4px;
+  padding: 2px 8px;
+  display: inline-block;
+}
+
+.has-pieces > td:first-child {
+  border-left: 3px solid var(--primary);
+}
+
 @media print {
   .topbar,
+  .breadcrumb,
   .toolbar,
   .section-actions,
   .table-actions,
