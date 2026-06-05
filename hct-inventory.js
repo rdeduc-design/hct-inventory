@@ -3,6 +3,7 @@
 
   const TABLES = {
     inventory: "hct_inventory_items",
+    pieces: "hct_inventory_pieces",
     transactions: "hct_inventory_transactions",
     vr: "hct_vr_assets",
     requests: "hct_requests",
@@ -60,6 +61,7 @@
     profile: loadProfile(),
     data: {
       inventory: [],
+      pieces: [],
       transactions: [],
       vr: [],
       requests: [],
@@ -88,10 +90,6 @@
     await loadData();
     processDeepLink();
     wireRealtime();
-    if (!state.authUser) {
-      state.view = "login";
-      state.viewArg = null;
-    }
     render();
   }
 
@@ -171,7 +169,7 @@
     state.authUser = null;
     localStorage.removeItem("hct-auth-user");
     notify("Signed out.");
-    navigate("login");
+    navigate("home");
   }
 
   async function loadData() {
@@ -183,17 +181,19 @@
     }
 
     try {
-      const [inventory, transactions, vr, requests, requestHistory, audit] = await withTimeout(Promise.all([
+      const [inventory, pieces, transactions, vr, requests, requestHistory, audit] = await withTimeout(Promise.all([
         state.supabase.from(TABLES.inventory).select("*").order("last_updated", { ascending: false }),
+        state.supabase.from(TABLES.pieces).select("*").order("piece_number", { ascending: true }),
         state.supabase.from(TABLES.transactions).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.vr).select("*").order("updated_at", { ascending: false }),
         state.supabase.from(TABLES.requests).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.requestHistory).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300)
       ]), 3500, "Supabase connection timed out");
-      const errored = [inventory, transactions, vr, requests, requestHistory, audit].find((result) => result.error);
+      const errored = [inventory, pieces, transactions, vr, requests, requestHistory, audit].find((result) => result.error);
       if (errored) throw errored.error;
       state.data.inventory = inventory.data || [];
+      state.data.pieces = pieces.data || [];
       state.data.transactions = transactions.data || [];
       state.data.vr = vr.data || [];
       state.data.requests = requests.data || [];
@@ -222,7 +222,6 @@
   function render() {
     app.innerHTML = `
       ${topbar()}
-      ${state.authUser ? breadcrumb() : ""}
       <main class="page">
         ${state.loading ? emptyState("Loading inventory system", "Fetching shared records.") : route()}
       </main>
@@ -231,67 +230,33 @@
     bindViewEvents();
   }
 
-  function breadcrumb() {
-    const crumbs = [{ label: "Home", view: "home" }];
-    if (state.view === "all") crumbs.push({ label: "All Inventory" });
-    else if (state.view === "dashboard") crumbs.push({ label: "Dashboard" });
-    else if (state.view === "vr") crumbs.push({ label: "VR Registry" });
-    else if (state.view === "requests") crumbs.push({ label: "Procurement Requests" });
-    else if (state.view === "audit") crumbs.push({ label: "Audit Log" });
-    else if (state.view === "deleted") crumbs.push({ label: "Restore Deleted" });
-    else if (state.view === "floor") {
-      crumbs.push({ label: state.viewArg || "Floor" });
-    } else if (state.view === "room") {
-      const room = getRoom(state.viewArg);
-      if (room) {
-        crumbs.push({ label: room.floor, view: "floor", arg: room.floor });
-        crumbs.push({ label: room.name });
-      }
-    } else if (state.view === "itemDetail") {
-      const item = findById(state.data.inventory, state.viewArg);
-      crumbs.push({ label: "Item Detail" });
-      if (item) crumbs.push({ label: item.item_name });
-    } else if (state.view === "vrDetail") {
-      crumbs.push({ label: "VR Registry", view: "vr" });
-      const asset = findById(state.data.vr, state.viewArg);
-      if (asset) crumbs.push({ label: asset.vr_number });
-    }
-    if (crumbs.length <= 1) return "";
-    return `<nav class="breadcrumb" aria-label="Breadcrumb">${crumbs.map((crumb, i) => {
-      const isLast = i === crumbs.length - 1;
-      if (isLast) return `<span class="bc-current">${escapeHtml(crumb.label)}</span>`;
-      return `<button class="bc-link" data-bc-view="${escapeAttr(crumb.view || "home")}" data-bc-arg="${escapeAttr(crumb.arg || "")}">${escapeHtml(crumb.label)}</button><span class="bc-sep">›</span>`;
-    }).join("")}</nav>`;
-  }
-
   function topbar() {
-    const authedNavItems = [
+    const navItems = [
       ["home", "Home"],
       ["dashboard", "Dashboard"],
       ["all", "All Inventory"],
       ["vr", "VR Registry"],
-      ["requests", "Procurement Requests"],
+      ["requests", "Requests"],
       ["audit", "Audit Log"],
       ["deleted", "Restore"]
     ];
     const dbText = state.dbReady ? "Cloud sync active" : "Local preview";
-    const authText = state.authUser ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "";
+    const authText = state.authUser ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "Guest access";
     return `
       <header class="topbar">
         <div class="brand">
           <img class="brand-logo" src="${document.body.classList.contains("dark") ? "hct-logo-teal.png" : "hct-logo-navy.png"}" alt="HCT Institute logo">
           <div>
             <h1>HCT Institute</h1>
-            <span>${dbText}${state.authUser ? ` - ${escapeHtml(currentRoleLabel())} - ${authText}` : ""}</span>
+            <span>${dbText} - ${escapeHtml(currentRoleLabel())} - ${authText}</span>
           </div>
         </div>
         <nav class="nav" aria-label="Main navigation">
-          ${state.authUser
-            ? authedNavItems.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("") + `<button data-sign-out>Sign Out</button>`
-            : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
+          ${navItems.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
+          ${state.authUser ? `<button data-sign-out>Sign Out</button>` : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
         </nav>
         <div class="top-actions">
-          ${state.authUser ? `<button class="icon-button" data-profile title="Access profile">&#x263A;</button>` : ""}
+          <button class="icon-button" data-profile title="Access profile">&#x263A;</button>
           <button class="icon-button" data-theme title="Toggle dark mode">&#x25D0;</button>
         </div>
       </header>
@@ -306,6 +271,7 @@
     if (state.view === "dashboard") return dashboardView();
     if (state.view === "vr") return vrView();
     if (state.view === "itemDetail") return itemDetailView(state.viewArg);
+    if (state.view === "pieceDetail") return pieceDetailView(state.viewArg);
     if (state.view === "vrDetail") return vrDetailView(state.viewArg);
     if (state.view === "requests") return requestsView();
     if (state.view === "audit") return auditView();
@@ -373,6 +339,19 @@
         <div class="mini-panel"><h3>Asset Details</h3><p><b>Asset Tag:</b> ${escapeHtml(item.asset_tag || "No asset tag")}</p><p><b>Room:</b> ${escapeHtml(roomLabel(item.room_code))}</p><p><b>Status:</b> ${statusBadge(item.functional_status)}</p><p><b>Quantity:</b> ${Number(item.quantity || 0)} ${escapeHtml(item.unit_measure || "")}</p></div>
         <div class="mini-panel"><h3>Record</h3><p><b>Category:</b> ${escapeHtml(item.category)}</p><p><b>Date Added:</b> ${dateOnly(item.date_added)}</p><p><b>Last Updated:</b> ${dateTime(item.last_updated)}</p><p>${escapeHtml(item.remarks || "")}</p></div>
       </section>
+    `;
+  }
+
+  function pieceDetailView(id) {
+    const piece = findPiece(id);
+    const item = piece ? findById(state.data.inventory, piece.inventory_item_id) : null;
+    if (!piece || !item) return sectionHead("Piece Not Found", "The scanned inventory piece could not be found in the current database.", `<button class="btn" data-view="home">Home</button>`);
+    return `
+      ${sectionHead(piece.asset_tag || item.item_name, "Scanned inventory piece record.", `<button class="btn" data-room="${item.room_code}">Open Room</button><button class="btn primary" data-qr-piece="${piece.id}">Print Label</button>`)}
+      <section class="panel"><div class="panel-body detail-grid">
+        <div class="mini-panel"><h3>Piece Details</h3><p><b>Item:</b> ${escapeHtml(item.item_name)}</p><p><b>Asset Tag:</b> ${escapeHtml(piece.asset_tag || "")}</p><p><b>Serial:</b> ${escapeHtml(piece.serial_number || "")}</p></div>
+        <div class="mini-panel"><h3>Location</h3><p><b>Room:</b> ${escapeHtml(roomLabel(piece.current_room_code || item.room_code))}</p><p><b>Origin:</b> ${escapeHtml(roomLabel(piece.origin_room_code || item.room_code))}</p><p><b>Transferred:</b> ${dateTime(piece.transferred_at)}</p></div>
+      </div></section>
     `;
   }
 
@@ -468,7 +447,7 @@
     const requests = filteredRequests();
     const canCreate = canCreateRequest();
     return `
-      ${sectionHead("Procurement Request Form", "Create procurement requests, update request status, and view shared request history.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request ${canCreate ? "" : "disabled"}>New Request</button>`)}
+      ${sectionHead("Deployment Requests", "Request multiple inventory items in one deployment cart. Admin approval is required before release.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request ${canCreate ? "" : "disabled"}>New Request</button>`)}
       <div class="toolbar">
         <input class="searchbox" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="Search requester, department, item, reason">
         <select data-filter="requestStatus">${optionHtml(["All"].concat(REQUEST_STATUSES), state.filters.requestStatus)}</select>
@@ -480,16 +459,11 @@
   }
 
   function auditView() {
-    const rows = state.data.audit.filter((row) => {
-      if (row.record_type === "inventory item") {
-        return row.action_type === "created" || row.action_type === "deleted" || row.action_type === "transferred";
-      }
-      return false;
-    });
+    const rows = state.data.audit;
     return `
-      ${sectionHead("Audit Log", "Records of inventory item additions, deletions, and transfers.", `<button class="btn" data-export="audit">Excel</button>`)}
+      ${sectionHead("Audit Log", "Application activity showing action type, record type, old value, new value, changed by, and timestamp.", `<button class="btn" data-export="audit">Excel</button>`)}
       <section class="panel">
-        ${rows.length ? auditTable(rows) : emptyState("No audit events yet", "Inventory additions, deletions, and transfers are logged here.")}
+        ${rows.length ? auditTable(rows) : emptyState("No audit events yet", "Changes, exports, approvals, releases, deletes, and restores are logged here.")}
       </section>
     `;
   }
@@ -505,18 +479,13 @@
   }
 
   function profileCard() {
-    const isSupabaseAuth = !!(state.authUser?.id);
     return `
       <aside class="profile-card">
         <h3>Access profile</h3>
         <div class="form-grid">
-          <label class="field full"><span>Name</span><input data-profile-field="name" value="${escapeAttr(state.profile.name)}" placeholder="Guest user" ${isSupabaseAuth ? "readonly" : ""}></label>
-          <label class="field full"><span>Role</span>${isSupabaseAuth
-            ? `<input value="${escapeAttr(currentRoleLabel())}" readonly>`
-            : `<select data-profile-field="role">${ROLES.map((role) => `<option value="${role.value}" ${role.value === state.profile.role ? "selected" : ""}>${role.label}</option>`).join("")}</select>`}
-          </label>
-          <label class="field full"><span>Assigned room</span><select data-profile-field="assignedRoom" ${isSupabaseAuth ? "disabled" : ""}>${optionHtml(["All"].concat(ROOMS.map((room) => room.code)), state.profile.assignedRoom, roomLabel)}</select></label>
-          ${isSupabaseAuth ? `<p class="field full muted" style="font-size:0.78rem;margin:0">Role and name are set from your Supabase account.</p>` : ""}
+          <label class="field full"><span>Name</span><input data-profile-field="name" value="${escapeAttr(state.profile.name)}" placeholder="Guest user"></label>
+          <label class="field full"><span>Role</span><select data-profile-field="role">${ROLES.map((role) => `<option value="${role.value}" ${role.value === state.profile.role ? "selected" : ""}>${role.label}</option>`).join("")}</select></label>
+          <label class="field full"><span>Assigned room</span><select data-profile-field="assignedRoom">${optionHtml(["All"].concat(ROOMS.map((room) => room.code)), state.profile.assignedRoom, roomLabel)}</select></label>
         </div>
       </aside>
     `;
@@ -583,55 +552,51 @@
             <th>Item</th><th>Category</th><th>Qty</th><th>Status</th><th>Room</th><th>Asset Tag</th><th>Dates</th><th>Remarks</th><th>Actions</th>
           </tr></thead>
           <tbody>
-            ${items.map((item) => inventoryRow(item, showActions, deletedMode)).join("")}
+            ${items.map((item) => {
+              const pieces = inventoryPieces(item);
+              return `
+              <tr>
+                <td><b>${escapeHtml(item.item_name)}</b><br><span class="muted">${escapeHtml(item.unit_measure || "")}</span>${pieces.length ? `<br><span class="muted">${pieces.length} piece record(s)</span>` : ""}</td>
+                <td>${badge(item.category)}</td>
+                <td class="compact-cell"><b>${Number(item.quantity || 0)}</b></td>
+                <td>${statusBadge(item.functional_status)}</td>
+                <td>${escapeHtml(roomLabel(item.room_code))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
+                <td>${escapeHtml(item.asset_tag || "")}</td>
+                <td><span class="muted">Added</span> ${dateOnly(item.date_added)}<br><span class="muted">Updated</span> ${dateTime(item.last_updated)}</td>
+                <td>${escapeHtml(item.remarks || "")}</td>
+                <td class="table-actions">
+                  <button class="btn" data-qr-item="${item.id}">QR</button>
+                  ${deletedMode ? `<button class="btn success" data-restore-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Restore</button>` : ""}
+                  ${showActions ? `<button class="btn success" data-add-stock="${item.id}" ${canTransact(item) ? "" : "disabled"}>Add Stock</button><button class="btn" data-transaction="${item.id}" ${canTransact(item) ? "" : "disabled"}>Move</button><button class="btn" data-edit-item="${item.id}" ${canEditInventory(item.room_code) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Delete</button>` : ""}
+                </td>
+              </tr>
+              ${pieces.map((piece, index) => pieceTableRow(item, piece, index, showActions && !deletedMode)).join("")}
+            `;
+            }).join("")}
           </tbody>
         </table>
       </div>
     `;
   }
 
-  function inventoryRow(item, showActions, deletedMode) {
-    const qty = Number(item.quantity || 0);
-    const hasMultiple = qty > 1;
-    const safeId = item.id.replace(/[^a-z0-9]/gi, "");
-    const collapseId = `pieces-${safeId}`;
-    const mainRow = `
-      <tr class="${hasMultiple ? "has-pieces" : ""}">
-        <td>
-          ${hasMultiple ? `<button class="btn-toggle-pieces" data-toggle="${escapeAttr(collapseId)}" title="Show ${qty} individual pieces">&#x25B6;</button>` : ""}
-          <b>${escapeHtml(item.item_name)}</b><br>
-          <span class="muted">${escapeHtml(item.unit_measure || "")}</span>
-        </td>
-        <td>${badge(item.category)}</td>
-        <td class="compact-cell"><b>${qty}</b></td>
-        <td>${statusBadge(item.functional_status)}</td>
-        <td>${escapeHtml(roomLabel(item.room_code))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
-        <td>${escapeHtml(item.asset_tag || "")}</td>
-        <td><span class="muted">Added</span> ${dateOnly(item.date_added)}<br><span class="muted">Updated</span> ${dateTime(item.last_updated)}</td>
-        <td>${escapeHtml(item.remarks || "")}</td>
+  function pieceTableRow(item, piece, index, showActions) {
+    const transferred = piece.transferred_at ? `Transferred ${dateTime(piece.transferred_at)}` : "Not transferred";
+    const origin = piece.origin_room_code ? `Origin: ${roomLabel(piece.origin_room_code)}` : `Origin: ${roomLabel(item.room_code)}`;
+    return `
+      <tr class="piece-row">
+        <td><span class="piece-indent">Piece ${Number(piece.piece_number || index + 1)}</span></td>
+        <td colspan="2"><span class="piece-tag">${escapeHtml(piece.asset_tag || pieceTag(item, index + 1))}</span></td>
+        <td>${statusBadge(piece.functional_status || item.functional_status)}</td>
+        <td>${escapeHtml(origin)}<br><span class="muted">${escapeHtml(transferred)}</span></td>
+        <td>${escapeHtml(piece.serial_number || "")}</td>
+        <td><span class="muted">Added</span> ${dateOnly(piece.date_added || item.date_added)}<br><span class="muted">Updated</span> ${dateTime(piece.updated_at || piece.created_at || item.last_updated)}</td>
+        <td>${escapeHtml(piece.remarks || "")}</td>
         <td class="table-actions">
-          <button class="btn" data-qr-item="${item.id}">QR</button>
-          ${deletedMode ? `<button class="btn success" data-restore-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Restore</button>` : ""}
-          ${showActions ? `<button class="btn" data-transaction="${item.id}" ${canTransact(item) ? "" : "disabled"}>Move</button><button class="btn" data-edit-item="${item.id}" ${canEditInventory(item.room_code) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-item="${item.id}" ${isAdmin() ? "" : "disabled"}>Delete</button>` : ""}
+          <button class="btn" data-qr-piece="${piece.id}">QR</button>
+          ${showActions ? `<button class="btn" data-move-piece="${piece.id}" ${canTransact(item) ? "" : "disabled"}>Move</button><button class="btn" data-edit-piece="${piece.id}" ${canEditInventory(item.room_code) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-piece="${piece.id}" ${isAdmin() ? "" : "disabled"}>Delete</button>` : ""}
         </td>
       </tr>
     `;
-    if (!hasMultiple) return mainRow;
-    const pieceRows = Array.from({ length: qty }, (_, i) => {
-      const num = i + 1;
-      const pieceTag = item.asset_tag ? `${item.asset_tag}-${String(num).padStart(3, "0")}` : `${item.id.slice(0, 8)}-${String(num).padStart(3, "0")}`;
-      return `
-        <tr class="piece-row" data-pieces="${escapeAttr(collapseId)}" style="display:none">
-          <td class="piece-cell"><span class="piece-num">Piece ${num}</span></td>
-          <td colspan="4"><span class="piece-tag">&#x1F3F7; ${escapeHtml(pieceTag)}</span></td>
-          <td></td><td></td><td></td>
-          <td class="table-actions">
-            <button class="btn" data-qr-piece-tag="${escapeAttr(pieceTag)}" data-qr-piece-item="${item.id}" data-qr-piece-num="${num}">QR</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-    return mainRow + pieceRows;
   }
 
   function transactionsPanel(roomCode) {
@@ -677,26 +642,18 @@
     return `
       <div class="table-wrap">
         <table data-table="requests">
-          <thead><tr><th>Requester</th><th>Department</th><th>Item</th><th>Qty</th><th>Priority</th><th>Status</th><th>Date</th><th>Reason</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Requester</th><th>Department</th><th>Designation</th><th>Items</th><th>Qty</th><th>Status</th><th>Date</th><th>Superior</th><th>Actions</th></tr></thead>
           <tbody>${rows.map((row) => `
             <tr>
               <td><b>${escapeHtml(row.requester_name)}</b></td>
               <td>${escapeHtml(row.department_program || "")}</td>
-              <td>${escapeHtml(row.item_requested || "")}</td>
+              <td>${escapeHtml(row.designation || "")}</td>
+              <td>${requestItemsSummary(row)}</td>
               <td>${Number(row.quantity_requested || 0)}</td>
-              <td>${priorityBadge(row.priority_level)}</td>
               <td>${requestBadge(row.status)}</td>
               <td>${dateOnly(row.date_requested)}</td>
-              <td>${escapeHtml(row.reason || "")}</td>
-              <td class="table-actions">
-                <button class="btn" data-history-request="${row.id}">History</button>
-                <button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button>
-                ${canManageRequests() ? `
-                  <button class="btn success" data-approve-request="${row.id}" ${row.status === "Approved" || row.status === "Released" ? "disabled" : ""}>Approve</button>
-                  <button class="btn danger" data-deny-request="${row.id}" ${row.status === "Denied" ? "disabled" : ""}>Deny</button>
-                  <button class="btn" data-status-request="${row.id}">Status</button>
-                ` : ""}
-              </td>
+              <td>${escapeHtml(row.immediate_superior || "")}</td>
+              <td class="table-actions"><button class="btn" data-print-request="${row.id}">Print</button><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
@@ -707,68 +664,19 @@
     return `
       <div class="table-wrap">
         <table data-table="audit">
-          <thead><tr><th>Action</th><th>Item</th><th>Asset Tag</th><th>Changed By</th><th>Timestamp</th><th>Old Value</th><th>New Value</th></tr></thead>
+          <thead><tr><th>Action</th><th>Record Type</th><th>Changed By</th><th>Timestamp</th><th>Old Value</th><th>New Value</th></tr></thead>
           <tbody>${rows.map((row) => `
             <tr>
-              <td>${badge(auditActionLabel(row.action_type))}</td>
-              <td>${escapeHtml(auditItemName(row))}</td>
-              <td><span class="muted">${escapeHtml(auditAssetTag(row))}</span></td>
+              <td>${badge(row.action_type)}</td>
+              <td>${escapeHtml(row.record_type || "")}</td>
               <td>${escapeHtml(row.changed_by || "")}<br><span class="muted">${escapeHtml(row.changed_role || "")}</span></td>
               <td>${dateTime(row.created_at)}</td>
-              <td><div class="audit-value">${escapeHtml(auditOldLabel(row))}</div></td>
-              <td><div class="audit-value">${escapeHtml(auditNewLabel(row))}</div></td>
+              <td><div class="audit-value">${escapeHtml(auditSummary(row.old_value))}</div></td>
+              <td><div class="audit-value">${escapeHtml(auditSummary(row.new_value))}</div></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
     `;
-  }
-
-  function auditActionLabel(type) {
-    if (type === "created") return "Addition";
-    if (type === "deleted") return "Deletion";
-    if (type === "transferred") return "Transfer";
-    return type || "";
-  }
-
-  function auditItemName(row) {
-    const v = row.new_value || row.old_value;
-    return v?.item_name || "";
-  }
-
-  function auditAssetTag(row) {
-    const v = row.new_value || row.old_value;
-    if (row.action_type === "transferred") return v?.asset_tag || "";
-    return v?.asset_tag || "";
-  }
-
-  function auditOldLabel(row) {
-    if (row.action_type === "created") return "—";
-    if (row.action_type === "deleted") {
-      const v = row.old_value;
-      if (!v) return "—";
-      return `Item: ${v.item_name || ""}; Qty: ${v.quantity ?? "—"}; Tag: ${v.asset_tag || "—"}`;
-    }
-    if (row.action_type === "transferred") {
-      const v = row.old_value;
-      if (!v) return "—";
-      return `Qty: ${v.quantity ?? "—"}; From: ${roomLabel(v.from)}`;
-    }
-    return auditSummary(row.old_value);
-  }
-
-  function auditNewLabel(row) {
-    if (row.action_type === "deleted") return "—";
-    if (row.action_type === "created") {
-      const v = row.new_value;
-      if (!v) return "—";
-      return `Item: ${v.item_name || ""}; Qty: ${v.quantity ?? "—"}; Tag: ${v.asset_tag || "—"}`;
-    }
-    if (row.action_type === "transferred") {
-      const v = row.new_value;
-      if (!v) return "—";
-      return `Qty: ${v.quantity ?? "—"}; To: ${roomLabel(v.to)}`;
-    }
-    return auditSummary(row.new_value);
   }
 
   function bindGlobalEvents() {
@@ -777,12 +685,6 @@
     app.querySelector("[data-profile]")?.addEventListener("click", openProfileModal);
     app.querySelector("[data-sign-out]")?.addEventListener("click", signOut);
     app.querySelectorAll("[data-profile-field]").forEach((field) => field.addEventListener("change", updateProfileFromField));
-    app.querySelectorAll("[data-bc-view]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const arg = button.dataset.bcArg || null;
-        navigate(button.dataset.bcView, arg || undefined);
-      });
-    });
   }
 
   function bindViewEvents() {
@@ -793,45 +695,24 @@
       render();
     }));
     app.querySelectorAll("[data-add-item]").forEach((el) => el.addEventListener("click", () => openInventoryModal(null, el.dataset.addItem || state.viewArg || "CSR")));
+    app.querySelectorAll("[data-add-stock]").forEach((el) => el.addEventListener("click", () => openAddStockModal(findById(state.data.inventory, el.dataset.addStock))));
     app.querySelectorAll("[data-edit-item]").forEach((el) => el.addEventListener("click", () => openInventoryModal(findById(state.data.inventory, el.dataset.editItem))));
     app.querySelectorAll("[data-delete-item]").forEach((el) => el.addEventListener("click", () => softDeleteItem(el.dataset.deleteItem)));
     app.querySelectorAll("[data-restore-item]").forEach((el) => el.addEventListener("click", () => restoreItem(el.dataset.restoreItem)));
     app.querySelectorAll("[data-transaction]").forEach((el) => el.addEventListener("click", () => openTransactionModal(findById(state.data.inventory, el.dataset.transaction))));
+    app.querySelectorAll("[data-move-piece]").forEach((el) => el.addEventListener("click", () => openPieceMoveModal(findPiece(el.dataset.movePiece))));
+    app.querySelectorAll("[data-edit-piece]").forEach((el) => el.addEventListener("click", () => openPieceModal(findPiece(el.dataset.editPiece))));
+    app.querySelectorAll("[data-delete-piece]").forEach((el) => el.addEventListener("click", () => deletePiece(el.dataset.deletePiece)));
     app.querySelectorAll("[data-add-request]").forEach((el) => el.addEventListener("click", () => openRequestModal()));
     app.querySelectorAll("[data-edit-request]").forEach((el) => el.addEventListener("click", () => openRequestModal(findById(state.data.requests, el.dataset.editRequest))));
+    app.querySelectorAll("[data-print-request]").forEach((el) => el.addEventListener("click", () => printDeploymentRequest(findById(state.data.requests, el.dataset.printRequest))));
     app.querySelectorAll("[data-history-request]").forEach((el) => el.addEventListener("click", () => openRequestHistory(el.dataset.historyRequest)));
-    app.querySelectorAll("[data-approve-request]").forEach((el) => el.addEventListener("click", () => quickUpdateRequestStatus(el.dataset.approveRequest, "Approved", "")));
-    app.querySelectorAll("[data-deny-request]").forEach((el) => el.addEventListener("click", () => quickUpdateRequestStatus(el.dataset.denyRequest, "Denied", "")));
-    app.querySelectorAll("[data-status-request]").forEach((el) => el.addEventListener("click", () => openRequestStatusModal(el.dataset.statusRequest)));
     app.querySelectorAll("[data-add-vr]").forEach((el) => el.addEventListener("click", () => openVrModal()));
     app.querySelectorAll("[data-edit-vr]").forEach((el) => el.addEventListener("click", () => openVrModal(findById(state.data.vr, el.dataset.editVr))));
     app.querySelectorAll("[data-qr-item]").forEach((el) => el.addEventListener("click", () => openQr("Inventory Item", itemQrPayload(findById(state.data.inventory, el.dataset.qrItem)))));
+    app.querySelectorAll("[data-qr-piece]").forEach((el) => el.addEventListener("click", () => openQr("Inventory Piece", pieceQrPayload(findPiece(el.dataset.qrPiece)))));
     app.querySelectorAll("[data-qr-vr]").forEach((el) => el.addEventListener("click", () => openQr("VR Asset", vrQrPayload(findById(state.data.vr, el.dataset.qrVr)))));
     app.querySelectorAll("[data-qr-room]").forEach((el) => el.addEventListener("click", () => openQr("Room Inventory", roomQrPayload(el.dataset.qrRoom))));
-    app.querySelectorAll("[data-qr-piece-tag]").forEach((el) => el.addEventListener("click", () => {
-      const pieceTag = el.dataset.qrPieceTag;
-      const pieceNum = el.dataset.qrPieceNum;
-      const item = findById(state.data.inventory, el.dataset.qrPieceItem);
-      const payload = {
-        type: "inventory_piece",
-        code: pieceTag,
-        assetTag: pieceTag,
-        label: item ? `${item.item_name} — Piece ${pieceNum}` : `Piece ${pieceNum}`,
-        room: item ? roomLabel(item.room_code) : "",
-        url: item ? deepLink("item", item.id) : ""
-      };
-      openQr("Inventory Piece", payload);
-    }));
-    app.querySelectorAll("[data-toggle]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const id = button.dataset.toggle;
-        const rows = app.querySelectorAll(`[data-pieces="${id}"]`);
-        const expanded = button.classList.contains("expanded");
-        rows.forEach((row) => { row.style.display = expanded ? "none" : "table-row"; });
-        button.classList.toggle("expanded", !expanded);
-        button.innerHTML = expanded ? "&#x25B6;" : "&#x25BC;";
-      });
-    });
     app.querySelectorAll("[data-print-room]").forEach((el) => el.addEventListener("click", () => printRoomReport(el.dataset.printRoom)));
     app.querySelectorAll("[data-export]").forEach((el) => el.addEventListener("click", () => exportView(el.dataset.export)));
     app.querySelectorAll("[data-pdf]").forEach((el) => el.addEventListener("click", () => exportPdf(el.dataset.pdf)));
@@ -839,14 +720,6 @@
   }
 
   function navigate(view, arg) {
-    const publicViews = ["login", "signup"];
-    if (!state.authUser && !publicViews.includes(view)) {
-      state.view = "login";
-      state.viewArg = null;
-      state.filters.search = "";
-      render();
-      return;
-    }
     state.view = view;
     state.viewArg = arg || null;
     state.filters.search = "";
@@ -857,6 +730,7 @@
     const params = new URLSearchParams(location.search);
     const room = params.get("room");
     const item = params.get("item");
+    const piece = params.get("piece");
     const vr = params.get("vr");
     if (room) {
       state.view = room === "ALL" ? "all" : "room";
@@ -864,6 +738,9 @@
     } else if (item) {
       state.view = "itemDetail";
       state.viewArg = item;
+    } else if (piece) {
+      state.view = "pieceDetail";
+      state.viewArg = piece;
     } else if (vr) {
       state.view = "vrDetail";
       state.viewArg = vr;
@@ -933,10 +810,65 @@
       saved = await insertRecord(TABLES.inventory, payload, "created", "inventory item");
       if (saved) await createTransaction({ item: saved, transaction_type: "Stock In", quantity: payload.quantity, source_room_code: null, destination_room_code: payload.room_code, notes: "Initial stock entry" }, false);
     }
-    if (saved) await saveLinkedVrAsset(saved, form);
+    if (saved) {
+      const oldQty = Number(existing?.quantity || 0);
+      const newQty = Number(saved.quantity || 0);
+      if (!existing && newQty > 0) await createPiecesForItem(saved, newQty, { reason: "Initial stock entry" });
+      if (existing && newQty > oldQty) await createPiecesForItem(saved, newQty - oldQty, { reason: "Quantity increased" });
+      await saveLinkedVrAsset(saved, form);
+    }
     closeModal();
     await loadData();
     render();
+  }
+
+  function requestItemRow(item = {}) {
+    return `
+      <div class="request-cart-row" data-request-row>
+        <input name="request_item_name" required value="${escapeAttr(item.item_name || "")}" placeholder="Item to be requested">
+        <input type="number" min="1" step="1" name="request_item_quantity" required value="${escapeAttr(item.quantity || 1)}" aria-label="Quantity">
+        <input name="request_item_serial" value="${escapeAttr(item.serial_number || "")}" placeholder="Serial number for VR">
+        <input name="request_item_asset" value="${escapeAttr(item.asset_tag || "")}" placeholder="Asset tag">
+        <button class="btn danger" type="button" data-remove-request-row>Delete</button>
+      </div>
+    `;
+  }
+
+  function addRequestItemRow(item) {
+    const container = modalRoot.querySelector("[data-request-items]");
+    if (!container) return;
+    container.insertAdjacentHTML("beforeend", requestItemRow(item));
+    container.lastElementChild?.querySelector("[data-remove-request-row]")?.addEventListener("click", (event) => removeRequestItemRow(event.currentTarget));
+  }
+
+  function removeRequestItemRow(button) {
+    const rows = modalRoot.querySelectorAll("[data-request-row]");
+    if (rows.length <= 1) return notify("At least one item is required.");
+    button.closest("[data-request-row]")?.remove();
+  }
+
+  function collectRequestItems() {
+    return Array.from(modalRoot.querySelectorAll("[data-request-row]")).map((row) => ({
+      item_name: clean(row.querySelector('[name="request_item_name"]')?.value),
+      quantity: Number(row.querySelector('[name="request_item_quantity"]')?.value || 0),
+      serial_number: clean(row.querySelector('[name="request_item_serial"]')?.value),
+      asset_tag: clean(row.querySelector('[name="request_item_asset"]')?.value)
+    })).filter((item) => item.item_name && item.quantity > 0);
+  }
+
+  function parseRequestItems(request) {
+    if (Array.isArray(request?.request_items) && request.request_items.length) return request.request_items;
+    return [{
+      item_name: request?.item_requested || "",
+      quantity: Number(request?.quantity_requested || 1),
+      serial_number: request?.serial_number || "",
+      asset_tag: request?.asset_tag || ""
+    }];
+  }
+
+  function requestItemsSummary(request) {
+    const items = parseRequestItems(request).filter((item) => item.item_name);
+    return items.length ? items.map((item) => `<div><b>${escapeHtml(item.item_name)}</b><br><span class="muted">Qty ${Number(item.quantity || 0)}${item.serial_number ? ` - SN ${escapeHtml(item.serial_number)}` : ""}${item.asset_tag ? ` - ${escapeHtml(item.asset_tag)}` : ""}</span></div>`).join("") : escapeHtml(request.item_requested || "");
   }
 
   async function saveLinkedVrAsset(item, form) {
@@ -958,6 +890,126 @@
     };
     if (existing) await updateRecord(TABLES.vr, existing.id, payload, "edited", "VR asset", existing);
     else await insertRecord(TABLES.vr, payload, "created", "VR asset");
+  }
+
+  function openAddStockModal(item) {
+    if (!item) return;
+    openModal("Add Stock", `
+      <form id="stock-form" class="modal-body">
+        <div class="form-grid">
+          ${field("Item", `<input value="${escapeAttr(item.item_name)}" disabled>`)}
+          ${field("Current Quantity", `<input value="${Number(item.quantity || 0)} ${escapeAttr(item.unit_measure || "")}" disabled>`)}
+          ${field("Quantity to Add", `<input type="number" min="1" step="1" name="quantity" required value="1">`)}
+          ${field("Date Added", `<input type="date" name="date_added" value="${today()}">`)}
+          ${field("Notes", `<textarea name="notes" placeholder="Supplier, receiving note, or stock source"></textarea>`, true)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="stock-form">Add Stock</button>
+      </div>
+    `);
+    document.getElementById("stock-form").addEventListener("submit", (event) => saveAddStock(event, item));
+  }
+
+  async function saveAddStock(event, item) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const quantity = Number(form.get("quantity") || 0);
+    if (quantity <= 0) return notify("Quantity must be greater than zero.");
+    const oldItem = { ...item };
+    const nextQty = Number(item.quantity || 0) + quantity;
+    const saved = await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: "Add Stock" });
+    if (!saved) return;
+    await createPiecesForItem(saved, quantity, { date_added: form.get("date_added") || today(), reason: clean(form.get("notes")) || "Stock added" });
+    await createTransaction({ item: saved, transaction_type: "Stock In", quantity, source_room_code: null, destination_room_code: saved.room_code, notes: clean(form.get("notes")) || "Stock added" }, false);
+    closeModal();
+    await loadData();
+    render();
+  }
+
+  function openPieceModal(piece) {
+    if (!piece) return;
+    const item = findById(state.data.inventory, piece.inventory_item_id);
+    openModal("Edit Piece", `
+      <form id="piece-form" class="modal-body">
+        <div class="form-grid">
+          ${field("Item", `<input value="${escapeAttr(item?.item_name || "Inventory item")}" disabled>`)}
+          ${field("Piece Number", `<input type="number" min="1" step="1" name="piece_number" value="${escapeAttr(piece.piece_number || 1)}">`)}
+          ${field("Asset Tag", `<input name="asset_tag" required value="${escapeAttr(piece.asset_tag || "")}">`)}
+          ${field("Serial Number", `<input name="serial_number" value="${escapeAttr(piece.serial_number || "")}">`)}
+          ${field("Date Added", `<input type="date" name="date_added" value="${escapeAttr(dateInput(piece.date_added) || today())}">`)}
+          ${field("Functional Status", `<select name="functional_status">${optionHtml(STATUSES, piece.functional_status || item?.functional_status || "Functional")}</select>`)}
+          ${field("Remarks", `<textarea name="remarks">${escapeHtml(piece.remarks || "")}</textarea>`, true)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="piece-form">Save Piece</button>
+      </div>
+    `);
+    document.getElementById("piece-form").addEventListener("submit", (event) => savePiece(event, piece));
+  }
+
+  async function savePiece(event, piece) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const payload = {
+      piece_number: Number(form.get("piece_number") || piece.piece_number || 1),
+      asset_tag: clean(form.get("asset_tag")),
+      serial_number: clean(form.get("serial_number")) || null,
+      date_added: form.get("date_added") || today(),
+      functional_status: form.get("functional_status"),
+      remarks: clean(form.get("remarks")),
+      updated_at: new Date().toISOString()
+    };
+    if (!payload.asset_tag) return notify("Asset tag is required.");
+    await updateRecord(TABLES.pieces, piece.id, payload, "edited", "inventory piece", piece);
+    closeModal();
+    await loadData();
+    render();
+  }
+
+  function openPieceMoveModal(piece) {
+    if (!piece) return;
+    const item = findById(state.data.inventory, piece.inventory_item_id);
+    if (!item) return;
+    openModal("Move Piece", `
+      <form id="piece-move-form" class="modal-body">
+        <div class="form-grid">
+          ${field("Piece", `<input value="${escapeAttr(piece.asset_tag || "")}" disabled>`)}
+          ${field("From", `<input value="${escapeAttr(roomLabel(item.room_code))}" disabled>`)}
+          ${field("To", `<select name="destination_room_code" required>${optionHtml(ROOMS.map((r) => r.code).filter((code) => code !== item.room_code), "", roomLabel)}</select>`)}
+          ${field("Notes", `<textarea name="notes" placeholder="Reason, receiving room, or handoff notes"></textarea>`, true)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="piece-move-form">Move Piece</button>
+      </div>
+    `);
+    document.getElementById("piece-move-form").addEventListener("submit", (event) => savePieceMove(event, item, piece));
+  }
+
+  async function savePieceMove(event, item, piece) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const destination = form.get("destination_room_code");
+    if (!destination) return notify("Destination room is required.");
+    await movePieces(item, [piece], destination, clean(form.get("notes")) || "Piece transferred");
+    closeModal();
+    await loadData();
+    render();
+  }
+
+  async function deletePiece(id) {
+    const piece = findPiece(id);
+    const item = piece ? findById(state.data.inventory, piece.inventory_item_id) : null;
+    if (!piece || !item || !confirm("Delete this piece and reduce the item quantity by 1?")) return;
+    await updateRecord(TABLES.pieces, piece.id, { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }, "deleted", "inventory piece", piece);
+    await updateRecord(TABLES.inventory, item.id, { quantity: Math.max(0, Number(item.quantity || 0) - 1), last_updated: new Date().toISOString() }, "edited", "inventory item", item, { movement: "Piece deleted" });
+    await loadData();
+    render();
   }
 
   function openTransactionModal(item) {
@@ -1006,22 +1058,16 @@
     const oldItem = { ...item };
     let nextQty = Number(item.quantity || 0);
     if (adjustQuantity) {
-      if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") {
-        nextQty += quantity;
-        await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
-      } else if (tx.transaction_type === "Stock Out") {
-        nextQty -= quantity;
-        if (nextQty < 0) return notify("Movement cannot reduce quantity below zero.");
-        await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
-      } else if (tx.transaction_type === "Transfer") {
-        if (tx.destination_room_code) {
-          await receiveTransfer(item, quantity, tx.destination_room_code);
-          await logAudit("transferred", "inventory item", item.id,
-            { item_name: item.item_name, quantity, from: tx.source_room_code || item.room_code, asset_tag: item.asset_tag },
-            { item_name: item.item_name, quantity, to: tx.destination_room_code }
-          );
-        }
+      if (tx.transaction_type === "Transfer" && tx.destination_room_code) {
+        if (nextQty - quantity < 0) return notify("Movement cannot reduce quantity below zero.");
+        await movePieces(item, await takePiecesForMove(item, quantity), tx.destination_room_code, tx.notes || "Inventory transfer");
+        return;
       }
+      if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") nextQty += quantity;
+      if (tx.transaction_type === "Stock Out") nextQty -= quantity;
+      if (nextQty < 0) return notify("Movement cannot reduce quantity below zero.");
+      const savedItem = await updateRecord(TABLES.inventory, item.id, { quantity: nextQty, last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: tx.transaction_type });
+      if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") await createPiecesForItem(savedItem || item, quantity, { reason: tx.transaction_type });
     }
     const payload = {
       inventory_item_id: item.id,
@@ -1043,9 +1089,9 @@
     const room = getRoom(destinationRoomCode);
     const existing = activeInventory().find((row) => row.room_code === destinationRoomCode && row.item_name.toLowerCase() === item.item_name.toLowerCase() && row.category === item.category && row.unit_measure === item.unit_measure);
     if (existing) {
-      await updateRecord(TABLES.inventory, existing.id, { quantity: Number(existing.quantity || 0) + quantity, last_updated: new Date().toISOString() }, "edited", "inventory item", existing, { movement: "Transfer received" }, false);
-    } else {
-      await insertRecord(TABLES.inventory, {
+      return updateRecord(TABLES.inventory, existing.id, { quantity: Number(existing.quantity || 0) + quantity, last_updated: new Date().toISOString() }, "edited", "inventory item", existing, { movement: "Transfer received" });
+    }
+    return insertRecord(TABLES.inventory, {
         item_name: item.item_name,
         category: item.category,
         quantity,
@@ -1059,22 +1105,59 @@
         date_added: today(),
         last_updated: new Date().toISOString(),
         remarks: `Transferred from ${roomLabel(item.room_code)}`
-      }, "created", "inventory item", false);
+      }, "created", "inventory item");
+  }
+
+  async function takePiecesForMove(item, quantity) {
+    let pieces = inventoryPieces(item).slice(0, quantity);
+    if (pieces.length < quantity) {
+      await createPiecesForItem(item, quantity - pieces.length, { reason: "Created for transfer" });
+      await loadData();
+      pieces = inventoryPieces(item).slice(0, quantity);
     }
+    return pieces;
+  }
+
+  async function movePieces(item, pieces, destinationRoomCode, notes) {
+    const quantity = pieces.length || 1;
+    const oldItem = { ...item };
+    const destinationItem = await receiveTransfer(item, quantity, destinationRoomCode);
+    if (!destinationItem) return;
+    if (Number(item.quantity || 0) >= quantity && destinationItem.id !== item.id) {
+      await updateRecord(TABLES.inventory, item.id, { quantity: Math.max(0, Number(item.quantity || 0) - quantity), last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: "Transfer sent" });
+    }
+    for (const piece of pieces) {
+      await updateRecord(TABLES.pieces, piece.id, {
+        inventory_item_id: destinationItem.id,
+        current_room_code: destinationRoomCode,
+        origin_room_code: piece.origin_room_code || item.room_code,
+        transferred_at: new Date().toISOString(),
+        remarks: [piece.remarks, notes].filter(Boolean).join(" | "),
+        updated_at: new Date().toISOString()
+      }, "transferred", "inventory piece", piece);
+    }
+    await createTransaction({ item, transaction_type: "Transfer", quantity, source_room_code: item.room_code, destination_room_code: destinationRoomCode, notes }, false);
   }
 
   function openRequestModal(request) {
-    openModal(`${request ? "Edit" : "New"} Procurement Request`, `
+    const items = parseRequestItems(request);
+    openModal(`${request ? "Edit" : "New"} Request`, `
       <form id="request-form" class="modal-body">
         <div class="form-grid">
           ${field("Requester Name", `<input name="requester_name" required value="${escapeAttr(request?.requester_name || profileName())}">`)}
-          ${field("Department/Program", `<input name="department_program" required value="${escapeAttr(request?.department_program || "")}">`)}
+          ${field("Department/Program", `<input name="department_program" required value="${escapeAttr(request?.department_program || "Education")}">`)}
+          ${field("Position", `<input name="position" required value="${escapeAttr(request?.position || "Simulationist")}">`)}
           ${field("Date Requested", `<input type="date" name="date_requested" value="${escapeAttr(dateInput(request?.date_requested) || today())}">`)}
-          ${field("Item Requested", `<input name="item_requested" required value="${escapeAttr(request?.item_requested || "")}">`)}
-          ${field("Quantity Requested", `<input type="number" min="1" step="1" name="quantity_requested" required value="${escapeAttr(request?.quantity_requested ?? 1)}">`)}
-          ${field("Priority Level", `<select name="priority_level">${optionHtml(PRIORITIES, request?.priority_level || "Medium")}</select>`)}
-          ${field("Request Status", `<select name="status" ${canManageRequests() ? "" : "disabled"}>${optionHtml(REQUEST_STATUSES, request?.status || "Pending")}</select>`)}
-          ${field("Reason for Request", `<textarea name="reason" required>${escapeHtml(request?.reason || "")}</textarea>`, true)}
+          ${field("Designation", `<input name="designation" required value="${escapeAttr(request?.designation || "")}" placeholder="Deployment area or activity">`)}
+          ${field("Immediate Superior", `<input name="immediate_superior" required value="${escapeAttr(request?.immediate_superior || "")}">`)}
+          ${field("Request Status", `<select name="status" ${isAdmin() ? "" : "disabled"}>${optionHtml(REQUEST_STATUSES, request?.status || "Pending")}</select>`)}
+          <div class="field full">
+            <span>Items to Request</span>
+            <div class="request-cart" data-request-items>
+              ${items.map((item) => requestItemRow(item)).join("")}
+            </div>
+            <button class="btn success" type="button" data-add-request-row>Add Item</button>
+          </div>
         </div>
       </form>
       <div class="modal-actions">
@@ -1083,20 +1166,29 @@
       </div>
     `);
     document.getElementById("request-form").addEventListener("submit", (event) => saveRequest(event, request));
+    modalRoot.querySelector("[data-add-request-row]")?.addEventListener("click", () => addRequestItemRow());
+    modalRoot.querySelectorAll("[data-remove-request-row]").forEach((button) => button.addEventListener("click", () => removeRequestItemRow(button)));
   }
 
   async function saveRequest(event, existing) {
     event.preventDefault();
     const form = new FormData(event.target);
+    const requestItems = collectRequestItems();
+    if (!requestItems.length) return notify("Add at least one requested item.");
+    const quantity = requestItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
     const payload = {
       requester_name: clean(form.get("requester_name")),
       department_program: clean(form.get("department_program")),
+      position: clean(form.get("position")),
       date_requested: form.get("date_requested") || today(),
-      item_requested: clean(form.get("item_requested")),
-      quantity_requested: Number(form.get("quantity_requested") || 1),
-      reason: clean(form.get("reason")),
-      priority_level: form.get("priority_level"),
-      status: canManageRequests() ? form.get("status") : (existing?.status || "Pending"),
+      designation: clean(form.get("designation")),
+      immediate_superior: clean(form.get("immediate_superior")),
+      item_requested: requestItems.map((item) => item.item_name).join(", "),
+      quantity_requested: quantity,
+      request_items: requestItems,
+      reason: clean(form.get("designation")) || "Deployment request",
+      priority_level: "Medium",
+      status: isAdmin() ? form.get("status") : (existing?.status || "Pending"),
       updated_at: new Date().toISOString()
     };
     let saved;
@@ -1133,7 +1225,7 @@
   async function saveVr(event, existing) {
     event.preventDefault();
     const form = new FormData(event.target);
-    const payload = {
+    let payload = {
       vr_number: clean(form.get("vr_number")),
       vr_serial_number: clean(form.get("vr_serial_number")),
       brand: clean(form.get("brand")),
@@ -1144,11 +1236,58 @@
       notes: clean(form.get("notes")),
       updated_at: new Date().toISOString()
     };
+    const linked = await ensureInventoryForVr(payload, existing);
+    if (linked?.item) payload = { ...payload, inventory_item_id: linked.item.id };
+    if (linked?.piece) payload = { ...payload, inventory_piece_id: linked.piece.id };
     if (existing) await updateRecord(TABLES.vr, existing.id, payload, "edited", "VR asset", existing);
     else await insertRecord(TABLES.vr, payload, "created", "VR asset");
     closeModal();
     await loadData();
     render();
+  }
+
+  async function ensureInventoryForVr(vrPayload, existingVr) {
+    const room = getRoom(vrPayload.assigned_room_code || "3F-VR") || getRoom("3F-VR");
+    const assetTag = `HCT-${room.code}-${slugCode(vrPayload.vr_number || "VR")}`;
+    const itemPayload = {
+      item_name: "VR Headset",
+      category: "Technology",
+      quantity: 1,
+      unit_measure: "Piece(s)",
+      functional_status: vrPayload.functional_status || "Functional",
+      room_code: room.code,
+      room_name: room.name,
+      floor_name: room.floor,
+      location_detail: room.name,
+      asset_tag: assetTag,
+      date_added: today(),
+      last_updated: new Date().toISOString(),
+      remarks: [vrPayload.brand, vrPayload.model, vrPayload.notes].filter(Boolean).join(" - ")
+    };
+    let item = existingVr?.inventory_item_id ? findById(state.data.inventory, existingVr.inventory_item_id) : null;
+    if (!item) item = activeInventory().find((row) => row.asset_tag === assetTag || (row.item_name === "VR Headset" && row.room_code === room.code && row.remarks?.includes(vrPayload.vr_number)));
+    if (item) {
+      item = await updateRecord(TABLES.inventory, item.id, { ...itemPayload, date_added: item.date_added || today() }, "edited", "inventory item", item, { movement: "VR registry sync" });
+    } else {
+      item = await insertRecord(TABLES.inventory, itemPayload, "created", "inventory item");
+      if (item) await createTransaction({ item, transaction_type: "Stock In", quantity: 1, source_room_code: null, destination_room_code: item.room_code, notes: "Created from VR registry" }, false);
+    }
+    if (!item) return null;
+    let piece = inventoryPieces(item)[0];
+    if (!piece) {
+      const pieces = await createPiecesForItem(item, 1, { serial_number: vrPayload.vr_serial_number || null, reason: `VR registry ${vrPayload.vr_number}` });
+      piece = pieces[0];
+    } else {
+      piece = await updateRecord(TABLES.pieces, piece.id, {
+        asset_tag: piece.asset_tag || assetTag,
+        serial_number: vrPayload.vr_serial_number || piece.serial_number || null,
+        current_room_code: room.code,
+        functional_status: vrPayload.functional_status || piece.functional_status,
+        remarks: `VR registry ${vrPayload.vr_number}`,
+        updated_at: new Date().toISOString()
+      }, "edited", "inventory piece", piece, { movement: "VR registry sync" });
+    }
+    return { item, piece };
   }
 
   async function softDeleteItem(id) {
@@ -1181,16 +1320,16 @@
     return data;
   }
 
-  async function updateRecord(table, id, payload, action, recordType, oldValue, extraNewValue, audit = true) {
+  async function updateRecord(table, id, payload, action, recordType, oldValue, extraNewValue) {
     const enriched = { ...payload, updated_by: profileName() };
     if (state.supabase && state.dbReady) {
       const { data, error } = await state.supabase.from(table).update(enriched).eq("id", id).select().single();
       if (error) return fail(error);
-      if (audit) await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+      await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
       return data;
     }
     const data = localUpdate(table, id, enriched);
-    if (audit) await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+    await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
     return data;
   }
 
@@ -1227,46 +1366,6 @@
       </div>
       <div class="modal-actions"><button class="btn primary" data-close-modal>Done</button></div>
     `);
-  }
-
-  function openRequestStatusModal(id) {
-    const request = findById(state.data.requests, id);
-    if (!request) return;
-    openModal("Update Request Status", `
-      <form id="status-form" class="modal-body">
-        <div class="form-grid">
-          <div class="field full"><span>Item Requested</span><p><b>${escapeHtml(request.item_requested)}</b> by ${escapeHtml(request.requester_name)}</p></div>
-          ${field("Current Status", `<input value="${escapeAttr(request.status)}" disabled>`)}
-          ${field("New Status", `<select name="status">${optionHtml(REQUEST_STATUSES, request.status)}</select>`)}
-          ${field("Note", `<textarea name="note" placeholder="Optional note for this status change"></textarea>`, true)}
-        </div>
-      </form>
-      <div class="modal-actions">
-        <button class="btn" data-close-modal>Cancel</button>
-        <button class="btn primary" form="status-form">Update Status</button>
-      </div>
-    `);
-    document.getElementById("status-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = new FormData(event.target);
-      const newStatus = form.get("status");
-      const note = clean(form.get("note"));
-      await quickUpdateRequestStatus(id, newStatus, note);
-      closeModal();
-    });
-  }
-
-  async function quickUpdateRequestStatus(id, newStatus, note) {
-    const request = findById(state.data.requests, id);
-    if (!request) return;
-    const oldStatus = request.status;
-    if (oldStatus === newStatus) return notify(`Request is already ${newStatus}.`);
-    const payload = { status: newStatus, updated_at: new Date().toISOString() };
-    const saved = await updateRecord(TABLES.requests, id, payload, statusAction(oldStatus, newStatus), "request", request);
-    if (saved) await addRequestHistory(id, oldStatus, newStatus, note || `Status changed to ${newStatus} by ${profileName()}`);
-    await loadData();
-    render();
-    notify(`Request status updated to ${newStatus}.`);
   }
 
   function openProfileModal() {
@@ -1380,10 +1479,52 @@
     logAudit("exported", "room report", roomCode, null, { room: room?.name || roomCode, rows: rows.length, format: "print" });
   }
 
+  function printDeploymentRequest(request) {
+    if (!request) return;
+    const items = parseRequestItems(request);
+    const logoUrl = new URL("hct-logo-navy.png", location.href).href;
+    const win = window.open("", "_blank");
+    if (!win) return notify("Allow popups to print deployment reports.");
+    win.document.write(`
+      <html><head><title>Employee Accountability Form</title>
+      <style>
+        body{font-family:Arial,sans-serif;margin:32px;color:#111827}
+        .sheet{max-width:900px;margin:0 auto}
+        header{display:grid;grid-template-columns:72px 1fr;gap:14px;align-items:center;border-bottom:3px solid #14213d;padding-bottom:12px;margin-bottom:18px}
+        header img{width:64px;height:64px;object-fit:contain}
+        h1{margin:0;text-align:center;font-size:22px;letter-spacing:.04em;text-transform:uppercase}
+        .meta{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:16px 0}
+        .fieldline{border:1px solid #9ca3af;padding:8px 10px;min-height:38px}
+        .fieldline b{display:inline-block;min-width:140px;color:#374151}
+        table{width:100%;border-collapse:collapse;margin-top:12px}
+        th,td{border:1px solid #9ca3af;padding:8px;text-align:left;font-size:13px}
+        th{background:#eef7f5;text-transform:uppercase;font-size:12px}
+        .signatures{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:46px;text-align:center}
+        .sig{border-top:1px solid #111827;padding-top:8px;font-size:12px}
+        @media print{body{margin:18px}.sheet{max-width:none}}
+      </style></head><body><div class="sheet">
+      <header><img src="${logoUrl}" alt="HCT Institute"><h1>Employee Accountability Form</h1></header>
+      <div class="meta">
+        <div class="fieldline"><b>Name:</b> ${escapeHtml(request.requester_name || "")}</div>
+        <div class="fieldline"><b>Date:</b> ${escapeHtml(dateOnly(request.date_requested))}</div>
+        <div class="fieldline"><b>Department:</b> ${escapeHtml(request.department_program || "Education")}</div>
+        <div class="fieldline"><b>Position:</b> ${escapeHtml(request.position || "Simulationist")}</div>
+        <div class="fieldline"><b>Designation:</b> ${escapeHtml(request.designation || "")}</div>
+        <div class="fieldline"><b>Immediate Superior:</b> ${escapeHtml(request.immediate_superior || "")}</div>
+      </div>
+      <table><thead><tr><th>Asset Tag</th><th>Item</th><th>Quantity</th><th>Serial Number</th></tr></thead>
+      <tbody>${items.map((item) => `<tr><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.item_name || "")}</td><td>${Number(item.quantity || 0)}</td><td>${escapeHtml(item.serial_number || "")}</td></tr>`).join("")}</tbody></table>
+      <div class="signatures"><div class="sig">Employee Signature</div><div class="sig">Immediate Superior</div><div class="sig">Approved By</div></div>
+      </div><script>print()</script></body></html>
+    `);
+    win.document.close();
+    logAudit("exported", "deployment request", request.id, null, { rows: items.length, format: "print" });
+  }
+
   function exportRows(kind) {
     if (kind === "inventory") return [["Item", "Category", "Quantity", "Unit", "Status", "Room", "Asset Tag", "Date Added", "Last Updated", "Remarks"]].concat(filteredInventory(state.view === "room" ? state.viewArg : null, false).map((item) => [item.item_name, item.category, item.quantity, item.unit_measure, item.functional_status, roomLabel(item.room_code), item.asset_tag, dateOnly(item.date_added), dateTime(item.last_updated), item.remarks]));
     if (kind === "vr") return [["VR Number", "Serial", "Brand", "Model", "Room", "Status", "Maintenance", "Notes"]].concat(filteredVr().map((row) => [row.vr_number, row.vr_serial_number, row.brand, row.model, roomLabel(row.assigned_room_code), row.functional_status, dateOnly(row.last_maintenance_date), row.notes]));
-    if (kind === "requests") return [["Requester", "Department", "Item", "Quantity", "Priority", "Status", "Date", "Reason"]].concat(filteredRequests().map((row) => [row.requester_name, row.department_program, row.item_requested, row.quantity_requested, row.priority_level, row.status, dateOnly(row.date_requested), row.reason]));
+    if (kind === "requests") return [["Requester", "Department", "Position", "Designation", "Superior", "Items", "Quantity", "Status", "Date"]].concat(filteredRequests().map((row) => [row.requester_name, row.department_program, row.position, row.designation, row.immediate_superior, parseRequestItems(row).map((item) => `${item.item_name} x${item.quantity}`).join("; "), row.quantity_requested, row.status, dateOnly(row.date_requested)]));
     if (kind === "audit") return [["Action", "Record Type", "Changed By", "Timestamp", "Old Value", "New Value"]].concat(state.data.audit.map((row) => [row.action_type, row.record_type, row.changed_by, dateTime(row.created_at), shortJson(row.old_value), shortJson(row.new_value)]));
     return [["Metric", "Value"], ["Inventory Items", activeInventory().length], ["Requests", state.data.requests.length], ["VR Assets", state.data.vr.length]];
   }
@@ -1423,7 +1564,7 @@
   function filteredRequests() {
     const term = state.filters.search.toLowerCase();
     return state.data.requests.filter((row) => {
-      const matchesTerm = !term || [row.requester_name, row.department_program, row.item_requested, row.reason].some((value) => String(value || "").toLowerCase().includes(term));
+      const matchesTerm = !term || [row.requester_name, row.department_program, row.position, row.designation, row.immediate_superior, row.item_requested, row.reason, parseRequestItems(row).map((item) => `${item.item_name} ${item.asset_tag} ${item.serial_number}`).join(" ")].some((value) => String(value || "").toLowerCase().includes(term));
       const matchesStatus = state.filters.requestStatus === "All" || row.status === state.filters.requestStatus;
       return matchesTerm && matchesStatus;
     });
@@ -1431,6 +1572,66 @@
 
   function activeInventory() {
     return state.data.inventory.filter((item) => !item.deleted_at);
+  }
+
+  function activePieces() {
+    return (state.data.pieces || []).filter((piece) => !piece.deleted_at);
+  }
+
+  function inventoryPieces(item) {
+    if (!item) return [];
+    return activePieces()
+      .filter((piece) => piece.inventory_item_id === item.id)
+      .sort((a, b) => Number(a.piece_number || 0) - Number(b.piece_number || 0));
+  }
+
+  function findPiece(id) {
+    return (state.data.pieces || []).find((piece) => piece.id === id);
+  }
+
+  async function createPiecesForItem(item, quantity, options = {}) {
+    const count = Math.max(0, Number(quantity || 0));
+    if (!item || count <= 0) return [];
+    const existing = inventoryPieces(item);
+    const created = [];
+    for (let index = 1; index <= count; index += 1) {
+      const pieceNumber = existing.length + created.length + 1;
+      const payload = {
+        inventory_item_id: item.id,
+        piece_number: pieceNumber,
+        asset_tag: nextPieceAssetTag(item, pieceNumber),
+        serial_number: options.serial_number || null,
+        origin_room_code: options.origin_room_code || item.room_code,
+        current_room_code: item.room_code,
+        date_added: options.date_added || item.date_added || today(),
+        functional_status: options.functional_status || item.functional_status || "Functional",
+        remarks: options.reason || "",
+        updated_at: new Date().toISOString()
+      };
+      const saved = await insertRecord(TABLES.pieces, payload, "created", "inventory piece");
+      if (saved) created.push(saved);
+    }
+    return created;
+  }
+
+  function nextPieceAssetTag(item, pieceNumber) {
+    const base = item.asset_tag || pieceTagBase(item);
+    let candidate = `${base}-${String(pieceNumber).padStart(3, "0")}`;
+    let suffix = pieceNumber;
+    const used = new Set((state.data.pieces || []).map((piece) => piece.asset_tag));
+    while (used.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}-${String(suffix).padStart(3, "0")}`;
+    }
+    return candidate;
+  }
+
+  function pieceTag(item, pieceNumber) {
+    return `${item.asset_tag || pieceTagBase(item)}-${String(pieceNumber).padStart(3, "0")}`;
+  }
+
+  function pieceTagBase(item) {
+    return `HCT-${item.room_code}-${slugCode(item.item_name || "ITEM")}`;
   }
 
   function loadProfile() {
@@ -1457,9 +1658,9 @@
 
   function loadLocalData() {
     try {
-      return { inventory: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [], ...JSON.parse(localStorage.getItem("hct-local-data") || "{}") };
+      return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [], ...JSON.parse(localStorage.getItem("hct-local-data") || "{}") };
     } catch {
-      return { inventory: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [] };
+      return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [] };
     }
   }
 
@@ -1516,7 +1717,7 @@
   }
 
   function canManageRequests() {
-    return ["admin", "supply_officer", "room_custodian"].includes(state.profile.role);
+    return isAdmin();
   }
 
   function canEditRequest(request) {
@@ -1615,6 +1816,11 @@
     return { type: "inventory_item", id: item?.id, code: item?.asset_tag || item?.id || "", assetTag: item?.asset_tag || "", label: item?.item_name || "Inventory Item", room: roomLabel(item?.room_code), roomCode: item?.room_code || "", url: deepLink("item", item?.id || "") };
   }
 
+  function pieceQrPayload(piece) {
+    const item = piece ? findById(state.data.inventory, piece.inventory_item_id) : null;
+    return { type: "inventory_piece", id: piece?.id, code: piece?.asset_tag || "", assetTag: piece?.asset_tag || "", label: item?.item_name || "Inventory Piece", serial: piece?.serial_number || "", room: roomLabel(piece?.current_room_code || item?.room_code), roomCode: piece?.current_room_code || item?.room_code || "", url: deepLink("piece", piece?.id || "") };
+  }
+
   function vrQrPayload(asset) {
     return { type: "vr_asset", id: asset?.id, code: asset?.vr_number || "", label: `${asset?.brand || "VR"} ${asset?.model || "Headset"}`.trim(), serial: asset?.vr_serial_number || "", room: roomLabel(asset?.assigned_room_code), roomCode: asset?.assigned_room_code || "", url: deepLink("vr", asset?.id || "") };
   }
@@ -1675,6 +1881,10 @@
 
   function clean(value) {
     return String(value || "").trim();
+  }
+
+  function slugCode(value) {
+    return clean(value).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 18) || "ITEM";
   }
 
   function findById(rows, id) {

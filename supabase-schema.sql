@@ -26,6 +26,25 @@ create table if not exists public.hct_inventory_items (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.hct_inventory_pieces (
+  id uuid primary key default gen_random_uuid(),
+  inventory_item_id uuid references public.hct_inventory_items(id) on delete cascade,
+  piece_number integer not null default 1 check (piece_number > 0),
+  asset_tag text not null unique,
+  serial_number text,
+  origin_room_code text,
+  current_room_code text,
+  transferred_at timestamptz,
+  date_added date not null default current_date,
+  functional_status text not null default 'Functional' check (functional_status in ('Functional', 'Not Functional', 'Under Repair', 'Missing')),
+  remarks text,
+  created_by text,
+  updated_by text,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.hct_inventory_transactions (
   id uuid primary key default gen_random_uuid(),
   inventory_item_id uuid references public.hct_inventory_items(id) on delete set null,
@@ -47,6 +66,7 @@ create table if not exists public.hct_inventory_transactions (
 create table if not exists public.hct_vr_assets (
   id uuid primary key default gen_random_uuid(),
   inventory_item_id uuid references public.hct_inventory_items(id) on delete set null,
+  inventory_piece_id uuid references public.hct_inventory_pieces(id) on delete set null,
   vr_number text not null unique,
   vr_serial_number text unique,
   brand text,
@@ -65,10 +85,14 @@ create table if not exists public.hct_requests (
   id uuid primary key default gen_random_uuid(),
   requester_name text not null,
   department_program text not null,
+  position text not null default 'Simulationist',
   date_requested date not null default current_date,
+  designation text,
+  immediate_superior text,
   item_requested text not null,
   quantity_requested numeric not null check (quantity_requested > 0),
-  reason text not null,
+  request_items jsonb not null default '[]'::jsonb,
+  reason text,
   priority_level text not null default 'Medium' check (priority_level in ('Low', 'Medium', 'High', 'Urgent')),
   status text not null default 'Pending' check (status in ('Pending', 'Approved', 'Released', 'Denied', 'Returned')),
   created_by text,
@@ -76,6 +100,18 @@ create table if not exists public.hct_requests (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.hct_vr_assets
+add column if not exists inventory_piece_id uuid references public.hct_inventory_pieces(id) on delete set null;
+
+alter table public.hct_requests
+add column if not exists position text not null default 'Simulationist',
+add column if not exists designation text,
+add column if not exists immediate_superior text,
+add column if not exists request_items jsonb not null default '[]'::jsonb;
+
+alter table public.hct_requests
+alter column reason drop not null;
 
 create table if not exists public.hct_request_history (
   id uuid primary key default gen_random_uuid(),
@@ -104,6 +140,9 @@ create index if not exists hct_inventory_room_idx on public.hct_inventory_items(
 create index if not exists hct_inventory_status_idx on public.hct_inventory_items(functional_status);
 create index if not exists hct_inventory_category_idx on public.hct_inventory_items(category);
 create index if not exists hct_inventory_deleted_idx on public.hct_inventory_items(deleted_at);
+create index if not exists hct_pieces_item_idx on public.hct_inventory_pieces(inventory_item_id);
+create index if not exists hct_pieces_room_idx on public.hct_inventory_pieces(current_room_code);
+create index if not exists hct_pieces_deleted_idx on public.hct_inventory_pieces(deleted_at);
 create index if not exists hct_transactions_item_idx on public.hct_inventory_transactions(inventory_item_id);
 create index if not exists hct_transactions_rooms_idx on public.hct_inventory_transactions(source_room_code, destination_room_code);
 create index if not exists hct_vr_search_idx on public.hct_vr_assets(vr_number, vr_serial_number, brand, model);
@@ -129,6 +168,11 @@ create trigger hct_inventory_items_updated_at
 before update on public.hct_inventory_items
 for each row execute function public.hct_set_updated_at();
 
+drop trigger if exists hct_inventory_pieces_updated_at on public.hct_inventory_pieces;
+create trigger hct_inventory_pieces_updated_at
+before update on public.hct_inventory_pieces
+for each row execute function public.hct_set_updated_at();
+
 drop trigger if exists hct_vr_assets_updated_at on public.hct_vr_assets;
 create trigger hct_vr_assets_updated_at
 before update on public.hct_vr_assets
@@ -140,6 +184,7 @@ before update on public.hct_requests
 for each row execute function public.hct_set_updated_at();
 
 alter table public.hct_inventory_items enable row level security;
+alter table public.hct_inventory_pieces enable row level security;
 alter table public.hct_inventory_transactions enable row level security;
 alter table public.hct_vr_assets enable row level security;
 alter table public.hct_requests enable row level security;
@@ -148,6 +193,7 @@ alter table public.hct_audit_logs enable row level security;
 
 grant usage on schema public to anon, authenticated;
 grant select, insert, update on table public.hct_inventory_items to anon, authenticated;
+grant select, insert, update on table public.hct_inventory_pieces to anon, authenticated;
 grant select, insert, update on table public.hct_inventory_transactions to anon, authenticated;
 grant select, insert, update on table public.hct_vr_assets to anon, authenticated;
 grant select, insert, update on table public.hct_requests to anon, authenticated;
@@ -171,6 +217,28 @@ with check (true);
 drop policy if exists "Public can update inventory" on public.hct_inventory_items;
 create policy "Public can update inventory"
 on public.hct_inventory_items
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "Public can read inventory pieces" on public.hct_inventory_pieces;
+create policy "Public can read inventory pieces"
+on public.hct_inventory_pieces
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "Public can add inventory pieces" on public.hct_inventory_pieces;
+create policy "Public can add inventory pieces"
+on public.hct_inventory_pieces
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists "Public can update inventory pieces" on public.hct_inventory_pieces;
+create policy "Public can update inventory pieces"
+on public.hct_inventory_pieces
 for update
 to anon, authenticated
 using (true)
@@ -275,6 +343,7 @@ declare
   table_name text;
   tracked_tables text[] := array[
     'hct_inventory_items',
+    'hct_inventory_pieces',
     'hct_inventory_transactions',
     'hct_vr_assets',
     'hct_requests',
