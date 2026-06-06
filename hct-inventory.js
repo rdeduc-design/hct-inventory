@@ -336,7 +336,7 @@
       <section class="hero">
         <div class="hero-panel">
           <div class="eyebrow">HCT Institute</div>
-          <h2>Shared healthcare simulation inventory.</h2>
+          <h2>Inventory System.</h2>
           <p>Open the website from any device to view records, submit requests, track stock movement, print QR labels, and monitor equipment status in real time.</p>
         </div>
         ${profileCard()}
@@ -356,14 +356,14 @@
           <div>
             <div class="eyebrow">HCT Institute</div>
             <h2>${isSignup ? "Create an inventory account." : "Login to HCT Inventory."}</h2>
-            <p>${isSignup ? "Create a profile with the role you use in the inventory system." : "Use your HCT inventory account, or continue with your saved local profile while testing."}</p>
+            <p>${isSignup ? "Create a profile with the role you use in the inventory system." : "Use your HCT inventory account."}</p>
           </div>
         </div>
         <aside class="profile-card">
           <h3>${isSignup ? "Sign Up" : "Login"}</h3>
           <form id="auth-form" class="form-grid">
             ${isSignup ? field("Full Name", `<input name="name" required value="${escapeAttr(state.profile.name)}" placeholder="Your name">`, true) : ""}
-            ${field("Email", `<input type="email" name="email" required value="${escapeAttr(state.authUser?.email || "")}" placeholder="name@hct.edu">`, true)}
+            ${field("Email", `<input type="email" name="email" required value="${escapeAttr(state.authUser?.email || "")}" placeholder="name@hct.edu.ph">`, true)}
             ${field("Password", `<input type="password" name="password" required minlength="6" placeholder="At least 6 characters">`, true)}
             ${isSignup ? field("Role", `<select name="role">${ROLES.filter((role) => role.value !== "viewer").map((role) => `<option value="${role.value}" ${role.value === state.profile.role ? "selected" : ""}>${role.label}</option>`).join("")}</select>`, true) : ""}
             ${isSignup ? field("Assigned Room", `<select name="assignedRoom">${optionHtml(["All"].concat(ROOMS.map((room) => room.code)), state.profile.assignedRoom, roomLabel)}</select>`, true) : ""}
