@@ -15,7 +15,7 @@ create table if not exists public.hct_inventory_items (
   room_code text not null,
   room_name text not null,
   location_detail text,
-  asset_tag text unique,
+  asset_tag text,
   date_added date not null default current_date,
   last_updated timestamptz not null default now(),
   remarks text,
@@ -123,6 +123,9 @@ add column if not exists deleted_by text;
 alter table public.hct_requests
 alter column reason drop not null;
 
+alter table public.hct_inventory_items
+drop constraint if exists hct_inventory_items_asset_tag_key;
+
 update public.hct_requests
 set request_type = 'Deployment'
 where request_type is null or request_type not in ('Deployment', 'Procurement');
@@ -161,6 +164,7 @@ create index if not exists hct_inventory_room_idx on public.hct_inventory_items(
 create index if not exists hct_inventory_status_idx on public.hct_inventory_items(functional_status);
 create index if not exists hct_inventory_category_idx on public.hct_inventory_items(category);
 create index if not exists hct_inventory_deleted_idx on public.hct_inventory_items(deleted_at);
+create unique index if not exists hct_inventory_active_asset_tag_uidx on public.hct_inventory_items(asset_tag) where deleted_at is null and asset_tag is not null;
 create index if not exists hct_pieces_item_idx on public.hct_inventory_pieces(inventory_item_id);
 create index if not exists hct_pieces_room_idx on public.hct_inventory_pieces(current_room_code);
 create index if not exists hct_pieces_deleted_idx on public.hct_inventory_pieces(deleted_at);
@@ -222,11 +226,11 @@ revoke all on table public.hct_vr_assets from anon;
 revoke all on table public.hct_requests from anon;
 revoke all on table public.hct_request_history from anon;
 revoke all on table public.hct_audit_logs from anon;
-grant select, insert, update on table public.hct_inventory_items to authenticated;
-grant select, insert, update on table public.hct_inventory_pieces to authenticated;
+grant select, insert, update, delete on table public.hct_inventory_items to authenticated;
+grant select, insert, update, delete on table public.hct_inventory_pieces to authenticated;
 grant select, insert, update on table public.hct_inventory_transactions to authenticated;
-grant select, insert, update on table public.hct_vr_assets to authenticated;
-grant select, insert, update on table public.hct_requests to authenticated;
+grant select, insert, update, delete on table public.hct_vr_assets to authenticated;
+grant select, insert, update, delete on table public.hct_requests to authenticated;
 grant select, insert, update on table public.hct_request_history to authenticated;
 grant select, insert on table public.hct_audit_logs to authenticated;
 
@@ -291,6 +295,13 @@ to authenticated
 using (public.hct_can_manage_inventory(room_code))
 with check (public.hct_can_manage_inventory(room_code));
 
+drop policy if exists "Admin can delete inventory" on public.hct_inventory_items;
+create policy "Admin can delete inventory"
+on public.hct_inventory_items
+for delete
+to authenticated
+using (public.hct_user_role() = 'admin');
+
 drop policy if exists "Public can read inventory pieces" on public.hct_inventory_pieces;
 drop policy if exists "Public can add inventory pieces" on public.hct_inventory_pieces;
 drop policy if exists "Public can update inventory pieces" on public.hct_inventory_pieces;
@@ -315,6 +326,13 @@ for update
 to authenticated
 using (public.hct_can_manage_inventory(current_room_code))
 with check (public.hct_can_manage_inventory(current_room_code));
+
+drop policy if exists "Admin can delete inventory pieces" on public.hct_inventory_pieces;
+create policy "Admin can delete inventory pieces"
+on public.hct_inventory_pieces
+for delete
+to authenticated
+using (public.hct_user_role() = 'admin');
 
 drop policy if exists "Public can read transactions" on public.hct_inventory_transactions;
 drop policy if exists "Public can add transactions" on public.hct_inventory_transactions;
@@ -368,6 +386,13 @@ to authenticated
 using (public.hct_can_manage_inventory(coalesce(assigned_room_code, '3F-VR')))
 with check (public.hct_can_manage_inventory(coalesce(assigned_room_code, '3F-VR')));
 
+drop policy if exists "Admin can delete VR assets" on public.hct_vr_assets;
+create policy "Admin can delete VR assets"
+on public.hct_vr_assets
+for delete
+to authenticated
+using (public.hct_user_role() = 'admin');
+
 drop policy if exists "Public can read requests" on public.hct_requests;
 drop policy if exists "Public can add requests" on public.hct_requests;
 drop policy if exists "Public can update requests" on public.hct_requests;
@@ -392,6 +417,13 @@ for update
 to authenticated
 using (public.hct_user_role() = 'admin' or (status = 'Pending' and created_by = public.hct_profile_name()))
 with check (public.hct_user_role() = 'admin' or (status = 'Pending' and created_by = public.hct_profile_name()));
+
+drop policy if exists "Admin can delete requests" on public.hct_requests;
+create policy "Admin can delete requests"
+on public.hct_requests
+for delete
+to authenticated
+using (public.hct_user_role() = 'admin');
 
 drop policy if exists "Public can read request history" on public.hct_request_history;
 drop policy if exists "Public can add request history" on public.hct_request_history;

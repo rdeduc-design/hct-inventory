@@ -164,6 +164,22 @@ button:disabled {
   font-size: 1.05rem;
 }
 
+.cart-button {
+  position: relative;
+  font-weight: 850;
+  color: var(--primary-strong);
+}
+
+.cart-button::before {
+  content: "Cart";
+  position: absolute;
+  inset: auto auto -17px 50%;
+  transform: translateX(-50%);
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 750;
+}
+
 .page {
   max-width: 1440px;
   margin: 0 auto;
@@ -745,6 +761,10 @@ td {
 }
 
 .detail-actions {
+  margin-top: 16px;
+}
+
+.deleted-summary {
   margin-top: 16px;
 }
 

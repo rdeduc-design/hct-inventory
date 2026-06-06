@@ -298,6 +298,7 @@
           ${authed ? `<button data-sign-out>Sign Out</button>` : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
         </nav>
         <div class="top-actions">
+          ${authed ? `<button class="icon-button cart-button" data-cart-open title="Deployment cart">${deploymentCartCount()}</button>` : ""}
           ${authed ? `<button class="icon-button" data-profile title="Access profile">&#x263A;</button>` : ""}
           <button class="icon-button" data-theme title="Toggle dark mode">&#x25D0;</button>
         </div>
@@ -522,10 +523,19 @@
 
   function deletedView() {
     const rows = state.data.inventory.filter((item) => item.deleted_at);
+    const requestRows = state.data.requests.filter((request) => request.deleted_at);
+    const vrRows = state.data.vr.filter((asset) => asset.deleted_at);
+    const pieceRows = state.data.pieces.filter((piece) => piece.deleted_at);
+    const total = rows.length + requestRows.length + vrRows.length + pieceRows.length;
     return `
-      ${sectionHead("Deleted Inventory", "Soft-deleted inventory records can be restored by an Admin.", "")}
+      ${sectionHead("Deleted Inventory", "Soft-deleted records can be restored or permanently deleted by an Admin.", `<button class="btn danger" data-purge-soft-deletes ${isAdmin() && total ? "" : "disabled"}>Delete All Soft-Deletes</button>`)}
       <section class="panel">
         ${rows.length ? inventoryTable(rows, false, true) : emptyState("No deleted records", "Deleted inventory will appear here for restore review.")}
+      </section>
+      <section class="analytics-grid deleted-summary">
+        ${softDeletedPanel("Deleted Requests", requestRows.map((row) => `${row.requester_name || "Request"} - ${row.item_requested || ""}`))}
+        ${softDeletedPanel("Deleted VR Assets", vrRows.map((row) => `${row.vr_number || "VR"} - ${row.vr_serial_number || ""}`))}
+        ${softDeletedPanel("Deleted Pieces", pieceRows.map((row) => `${row.asset_tag || "Piece"} - ${row.serial_number || ""}`))}
       </section>
     `;
   }
@@ -645,15 +655,17 @@
           <tbody>
             ${items.map((item) => {
               const pieces = inventoryPieces(item);
+              const displayRoomCode = item._display_room_code || item.room_code;
+              const displayQuantity = item._display_quantity ?? item.quantity;
               const isVirtualVr = Boolean(item.virtual_vr_asset);
               const qrButton = isVirtualVr ? `<button class="btn" data-qr-vr="${item.vr_asset_id}">QR</button>` : `<button class="btn" data-qr-item="${item.id}">QR</button>`;
               return `
               <tr>
                 <td><b>${escapeHtml(item.item_name)}</b><br><span class="muted">${escapeHtml(item.unit_measure || "")}</span>${pieces.length ? `<br><span class="muted">${pieces.length} piece record(s)</span>` : ""}</td>
                 <td>${badge(item.category)}</td>
-                <td class="compact-cell"><b>${Number(item.quantity || 0)}</b></td>
+                <td class="compact-cell"><b>${Number(displayQuantity || 0)}</b></td>
                 <td>${statusBadge(item.functional_status)}</td>
-                <td>${escapeHtml(roomLabel(item.room_code))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
+                <td>${escapeHtml(roomLabel(displayRoomCode))}<br><span class="muted">${escapeHtml(item.location_detail || "")}</span></td>
                 <td>${escapeHtml(item.asset_tag || "")}</td>
                 <td><span class="muted">Added</span> ${dateOnly(item.date_added)}<br><span class="muted">Updated</span> ${dateTime(item.last_updated)}</td>
                 <td>${escapeHtml(item.remarks || "")}</td>
@@ -779,6 +791,7 @@
     app.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.view, button.dataset.crumbArg)));
     app.querySelector("[data-theme]")?.addEventListener("click", toggleTheme);
     app.querySelector("[data-profile]")?.addEventListener("click", openProfileModal);
+    app.querySelector("[data-cart-open]")?.addEventListener("click", openDeploymentCartModal);
     app.querySelector("[data-sign-out]")?.addEventListener("click", signOut);
     app.querySelectorAll("[data-profile-field]").forEach((field) => field.addEventListener("change", updateProfileFromField));
   }
@@ -795,6 +808,7 @@
     app.querySelectorAll("[data-edit-item]").forEach((el) => el.addEventListener("click", () => openInventoryModal(findById(state.data.inventory, el.dataset.editItem))));
     app.querySelectorAll("[data-delete-item]").forEach((el) => el.addEventListener("click", () => softDeleteItem(el.dataset.deleteItem)));
     app.querySelectorAll("[data-restore-item]").forEach((el) => el.addEventListener("click", () => restoreItem(el.dataset.restoreItem)));
+    app.querySelectorAll("[data-purge-soft-deletes]").forEach((el) => el.addEventListener("click", purgeSoftDeletes));
     app.querySelectorAll("[data-transaction]").forEach((el) => el.addEventListener("click", () => openTransactionModal(findById(state.data.inventory, el.dataset.transaction))));
     app.querySelectorAll("[data-move-piece]").forEach((el) => el.addEventListener("click", () => openPieceMoveModal(findPiece(el.dataset.movePiece))));
     app.querySelectorAll("[data-edit-piece]").forEach((el) => el.addEventListener("click", () => openPieceModal(findPiece(el.dataset.editPiece))));
@@ -1099,6 +1113,10 @@
     return `hct-deployment-cart:${userKey}`;
   }
 
+  function deploymentCartCount() {
+    return loadDeploymentCart().length || "0";
+  }
+
   function loadDeploymentCart() {
     try {
       return JSON.parse(localStorage.getItem(deploymentCartKey()) || "[]");
@@ -1124,6 +1142,54 @@
     else items.push(nextItem);
     saveDeploymentCart(items);
     notify(`Added to your deployment cart (${items.length} item${items.length === 1 ? "" : "s"}).`);
+    render();
+  }
+
+  function removeDeploymentCartItem(index) {
+    const items = loadDeploymentCart();
+    items.splice(index, 1);
+    saveDeploymentCart(items);
+    closeModal();
+    render();
+    openDeploymentCartModal();
+  }
+
+  function openDeploymentCartModal() {
+    const items = loadDeploymentCart();
+    openModal("Deployment Cart", `
+      <div class="modal-body">
+        ${items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Qty</th><th>Asset Tag</th><th>Serial</th><th>Room</th><th>Action</th></tr></thead><tbody>${items.map((item, index) => `<tr><td><b>${escapeHtml(item.item_name || "")}</b></td><td>${Number(item.quantity || 0)}</td><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.serial_number || "")}</td><td>${escapeHtml(roomLabel(item.room_code))}</td><td><button class="btn danger" data-remove-cart-item="${index}">Remove</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("Your deployment cart is empty", "Scan an item QR code, then add it to your deployment cart.")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Close</button>
+        <button class="btn" data-print-cart ${items.length ? "" : "disabled"}>Print</button>
+        <button class="btn primary" data-cart-request ${items.length ? "" : "disabled"}>Create Deployment Request</button>
+      </div>
+    `);
+    modalRoot.querySelectorAll("[data-remove-cart-item]").forEach((button) => button.addEventListener("click", () => removeDeploymentCartItem(Number(button.dataset.removeCartItem))));
+    modalRoot.querySelector("[data-print-cart]")?.addEventListener("click", () => printDeploymentRequest(cartAsDeploymentRequest()));
+    modalRoot.querySelector("[data-cart-request]")?.addEventListener("click", () => {
+      closeModal();
+      openRequestModal(null, "Deployment");
+    });
+  }
+
+  function cartAsDeploymentRequest() {
+    const items = loadDeploymentCart();
+    return {
+      id: "deployment-cart",
+      requester_name: profileName(),
+      department_program: "",
+      position: "",
+      date_requested: today(),
+      designation: "",
+      immediate_superior: "",
+      item_requested: items.map((item) => item.item_name).join(", "),
+      quantity_requested: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+      request_items: items,
+      request_type: "Deployment",
+      status: "Pending"
+    };
   }
 
   function addItemToDeploymentCart(item) {
@@ -1394,7 +1460,9 @@
     if (adjustQuantity) {
       if (tx.transaction_type === "Transfer" && tx.destination_room_code) {
         if (nextQty - quantity < 0) return notify("Movement cannot reduce quantity below zero.");
-        await movePieces(item, await takePiecesForMove(item, quantity), tx.destination_room_code, tx.notes || "Inventory transfer");
+        const piecesForMove = await takePiecesForMove(item, quantity, tx.source_room_code || item.room_code);
+        if (piecesForMove.length < quantity) return notify("Not enough pieces are available in the selected origin room.");
+        await movePieces(item, piecesForMove, tx.destination_room_code, tx.notes || "Inventory transfer");
         return;
       }
       if (tx.transaction_type === "Stock In" || tx.transaction_type === "Return") nextQty += quantity;
@@ -1442,12 +1510,13 @@
       }, "created", "inventory item");
   }
 
-  async function takePiecesForMove(item, quantity) {
-    let pieces = inventoryPieces(item).slice(0, quantity);
+  async function takePiecesForMove(item, quantity, sourceRoomCode) {
+    const fromRoom = sourceRoomCode || item.room_code;
+    let pieces = inventoryPieces(item).filter((piece) => (piece.current_room_code || item.room_code) === fromRoom).slice(0, quantity);
     if (pieces.length < quantity) {
       await createPiecesForItem(item, quantity - pieces.length, { reason: "Created for transfer" });
       await loadData();
-      pieces = inventoryPieces(item).slice(0, quantity);
+      pieces = inventoryPieces(item).filter((piece) => (piece.current_room_code || item.room_code) === fromRoom).slice(0, quantity);
     }
     return pieces;
   }
@@ -1456,8 +1525,15 @@
     const quantity = pieces.length || 1;
     const oldItem = { ...item };
     const room = getRoom(destinationRoomCode);
+    const sourceRoomCode = pieces[0]?.current_room_code || item.room_code;
     if (!room) return notify("Destination room is required.");
-    await updateRecord(TABLES.inventory, item.id, { last_updated: new Date().toISOString() }, "edited", "inventory item", oldItem, { movement: "Piece transfer" });
+    await updateRecord(TABLES.inventory, item.id, { last_updated: new Date().toISOString() }, "transferred", "inventory item", oldItem, {
+      movement: "Piece transfer",
+      item_name: item.item_name,
+      quantity,
+      source_room_code: sourceRoomCode,
+      destination_room_code: destinationRoomCode
+    });
     for (const piece of pieces) {
       const originRoom = piece.origin_room_code || item.room_code;
       const isBackAtOrigin = destinationRoomCode === originRoom;
@@ -1469,7 +1545,7 @@
         updated_at: new Date().toISOString()
       }, "transferred", "inventory piece", piece);
     }
-    await createTransaction({ item, transaction_type: "Transfer", quantity, source_room_code: oldItem.room_code, destination_room_code: destinationRoomCode, notes }, false);
+    await createTransaction({ item, transaction_type: "Transfer", quantity, source_room_code: sourceRoomCode, destination_room_code: destinationRoomCode, notes }, false);
   }
 
   function openRequestModal(request, defaultType) {
@@ -1646,6 +1722,21 @@
     render();
   }
 
+  async function purgeSoftDeletes() {
+    if (!isAdmin() || !confirm("Permanently delete all soft-deleted records? This cannot be undone.")) return;
+    const deletedPieces = state.data.pieces.filter((piece) => piece.deleted_at);
+    const deletedVr = state.data.vr.filter((asset) => asset.deleted_at);
+    const deletedRequests = state.data.requests.filter((request) => request.deleted_at);
+    const deletedInventory = state.data.inventory.filter((item) => item.deleted_at);
+    for (const piece of deletedPieces) await hardDeleteRecord(TABLES.pieces, piece.id, "inventory piece", piece);
+    for (const asset of deletedVr) await hardDeleteRecord(TABLES.vr, asset.id, "VR asset", asset);
+    for (const request of deletedRequests) await hardDeleteRecord(TABLES.requests, request.id, "request", request);
+    for (const item of deletedInventory) await hardDeleteRecord(TABLES.inventory, item.id, "inventory item", item);
+    await loadData();
+    render();
+    notify("Soft-deleted records were permanently deleted.");
+  }
+
   async function insertRecord(table, payload, action, recordType, audit = true) {
     const enriched = { ...payload, created_by: payload.created_by || profileName(), updated_by: profileName() };
     if (state.supabase && state.dbReady) {
@@ -1671,6 +1762,17 @@
     const data = localUpdate(table, id, enriched);
     await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
     return data;
+  }
+
+  async function hardDeleteRecord(table, id, recordType, oldValue) {
+    if (state.supabase && state.dbReady) {
+      const { error } = await state.supabase.from(table).delete().eq("id", id);
+      if (error) return fail(error);
+    } else {
+      localDelete(table, id);
+    }
+    await logAudit("purged", recordType, id, oldValue || null, { purged: true, item_name: oldValue?.item_name, asset_tag: oldValue?.asset_tag, requester_name: oldValue?.requester_name, vr_number: oldValue?.vr_number });
+    return true;
   }
 
   async function logAudit(actionType, recordType, recordId, oldValue, newValue) {
@@ -1890,7 +1992,7 @@
   function filteredInventory(roomCode, includeDeleted) {
     let rows = includeDeleted ? state.data.inventory.slice() : activeInventory();
     if (!includeDeleted) rows = rows.concat(virtualVrInventoryRows(roomCode === "3F-VR"));
-    if (roomCode) rows = rows.filter((item) => item.room_code === roomCode || inventoryPieces(item).some((piece) => (piece.current_room_code || item.room_code) === roomCode));
+    if (roomCode) rows = rows.map((item) => scopedInventoryRow(item, roomCode)).filter(Boolean);
     const term = state.filters.search.toLowerCase();
     if (term) rows = rows.filter((item) => [item.item_name, item.category, item.functional_status, roomLabel(item.room_code), item.asset_tag, item.remarks].some((value) => String(value || "").toLowerCase().includes(term)));
     if (state.filters.category !== "All") rows = rows.filter((item) => item.category === state.filters.category);
@@ -1899,6 +2001,24 @@
     if (state.filters.sort === "quantity_desc") rows.sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0));
     if (state.filters.sort === "status_asc") rows.sort((a, b) => a.functional_status.localeCompare(b.functional_status));
     return rows;
+  }
+
+  function scopedInventoryRow(item, roomCode) {
+    if (!roomCode || item.virtual_vr_asset) return item.room_code === roomCode ? item : null;
+    const pieces = inventoryPieces(item);
+    if (!pieces.length) return item.room_code === roomCode ? item : null;
+    const roomPieces = pieces.filter((piece) => (piece.current_room_code || item.room_code) === roomCode);
+    if (!roomPieces.length) return null;
+    const room = getRoom(roomCode);
+    return {
+      ...item,
+      _display_room_code: roomCode,
+      _display_quantity: roomPieces.length,
+      _visible_pieces: roomPieces,
+      room_name: room?.name || item.room_name,
+      floor_name: room?.floor || item.floor_name,
+      location_detail: room?.name || item.location_detail
+    };
   }
 
   function filteredVr() {
@@ -1968,6 +2088,7 @@
 
   function inventoryPieces(item) {
     if (!item) return [];
+    if (Array.isArray(item._visible_pieces)) return item._visible_pieces;
     return activePieces()
       .filter((piece) => piece.inventory_item_id === item.id)
       .sort((a, b) => Number(a.piece_number || 0) - Number(b.piece_number || 0));
@@ -2085,6 +2206,12 @@
     state.data[key][index] = { ...state.data[key][index], ...payload };
     saveLocalData();
     return state.data[key][index];
+  }
+
+  function localDelete(table, id) {
+    const key = tableKey(table);
+    state.data[key] = state.data[key].filter((row) => row.id !== id);
+    saveLocalData();
   }
 
   function tableKey(table) {
@@ -2205,6 +2332,10 @@
     return `<div class="empty"><div><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span></div></div>`;
   }
 
+  function softDeletedPanel(title, rows) {
+    return `<div class="mini-panel"><h3>${escapeHtml(title)}</h3>${rows.length ? `<div class="bar-list">${rows.slice(0, 8).map((row) => `<div>${escapeHtml(row)}</div>`).join("")}${rows.length > 8 ? `<p class="muted">+${rows.length - 8} more</p>` : ""}</div>` : `<p class="muted">None.</p>`}</div>`;
+  }
+
   function optionHtml(options, selected, labeler) {
     return options.map((option) => {
       const value = Array.isArray(option) ? option[0] : option;
@@ -2257,8 +2388,14 @@
   }
 
   function nextAssetTag(roomCode) {
-    const count = activeInventory().filter((item) => item.room_code === roomCode).length + 1;
-    return `HCT-${roomCode}-${String(count).padStart(4, "0")}`;
+    const used = new Set(activeInventory().filter((item) => item.room_code === roomCode).map((item) => item.asset_tag).filter(Boolean));
+    let index = 1;
+    let candidate = `HCT-${roomCode}-${String(index).padStart(4, "0")}`;
+    while (used.has(candidate)) {
+      index += 1;
+      candidate = `HCT-${roomCode}-${String(index).padStart(4, "0")}`;
+    }
+    return candidate;
   }
 
   function nextVrNumber() {
@@ -2328,6 +2465,8 @@
       ["unit_measure", "Unit"],
       ["functional_status", "Status"],
       ["room_code", "Room"],
+      ["source_room_code", "Origin Room"],
+      ["destination_room_code", "Transferred To"],
       ["vr_number", "VR Number"],
       ["vr_serial_number", "Serial"],
       ["requester_name", "Requester"],
@@ -2341,7 +2480,7 @@
     ];
     const parts = labels
       .filter(([key]) => value[key] !== undefined && value[key] !== null && value[key] !== "")
-      .map(([key, label]) => `${label}: ${key === "room_code" ? roomLabel(value[key]) : value[key]}`);
+      .map(([key, label]) => `${label}: ${key.includes("room_code") ? roomLabel(value[key]) : value[key]}`);
     if (value.room) parts.push(`Room: ${value.room}`);
     if (!parts.length) return "Record updated";
     return parts.slice(0, 8).join("; ");
