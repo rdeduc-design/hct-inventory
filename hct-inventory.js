@@ -282,7 +282,7 @@
       ["audit", "Audit Log"],
       ["deleted", "Restore"]
     ] : [];
-    const dbText = state.dbReady ? "Cloud sync active" : "Local preview";
+    const dbText = state.dbReady ? "Real-time sync" : "Local preview only";
     const authText = authed ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "Sign in required";
     return `
       <header class="topbar">
@@ -336,8 +336,8 @@
       <section class="hero">
         <div class="hero-panel">
           <div class="eyebrow">HCT Institute</div>
-          <h2>Inventory System.</h2>
-          <p>Open the website from any device to view records, submit requests, track stock movement, print QR labels, and monitor equipment status in real time.</p>
+          <h2>HCT Inventory System</h2>
+          <p>Smarter Inventory Control at Your Fingertips</p>
         </div>
         ${profileCard()}
       </section>
