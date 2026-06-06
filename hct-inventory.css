@@ -13,6 +13,7 @@
   --warning: #ca8a04;
   --violet: #6d5bd0;
   --shadow: 0 18px 45px rgba(22, 38, 34, 0.12);
+  --shadow-soft: 0 8px 24px rgba(20, 33, 61, 0.08);
   --radius: 8px;
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -131,6 +132,7 @@ button:disabled {
   white-space: nowrap;
   padding: 8px 12px;
   color: var(--muted);
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
 .nav button.active,
@@ -139,6 +141,14 @@ button:disabled {
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
   color: var(--primary-strong);
   font-weight: 700;
+}
+
+.nav button:hover,
+.btn:hover,
+.icon-button:hover,
+.segmented button:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
 }
 
 .top-actions {
@@ -160,6 +170,28 @@ button:disabled {
   padding: 24px clamp(14px, 3vw, 34px) 44px;
 }
 
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.breadcrumbs button {
+  border: 0;
+  background: transparent;
+  color: var(--primary-strong);
+  font-weight: 750;
+  padding: 0;
+}
+
+.breadcrumbs span:last-child {
+  color: var(--text);
+  font-weight: 750;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
@@ -176,6 +208,15 @@ button:disabled {
     linear-gradient(135deg, color-mix(in srgb, var(--primary) 14%, var(--surface)), var(--surface) 58%),
     var(--surface);
   box-shadow: var(--shadow);
+}
+
+.hero-panel,
+.profile-card,
+.panel,
+.mini-panel,
+.big-card,
+.stat-tile {
+  box-shadow: var(--shadow-soft);
 }
 
 .auth-hero {
@@ -665,6 +706,10 @@ td {
   align-items: center;
 }
 
+.request-cart-row.procurement-row {
+  grid-template-columns: minmax(260px, 1fr) minmax(92px, 0.22fr) auto;
+}
+
 .request-cart-row input,
 .request-cart-row select {
   width: 100%;
@@ -675,6 +720,11 @@ td {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+}
+
+.request-tabs {
+  margin: 0 0 12px;
+  background: var(--surface);
 }
 
 .segmented button {
@@ -692,6 +742,23 @@ td {
   border-radius: var(--radius);
   background: var(--surface-2);
   text-align: center;
+}
+
+.detail-actions {
+  margin-top: 16px;
+}
+
+.action-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 8%, var(--surface)), var(--surface));
+  box-shadow: var(--shadow-soft);
+}
+
+.action-card h3 {
+  margin: 0 0 6px;
 }
 
 .qr-box canvas,

@@ -77,6 +77,8 @@ create table if not exists public.hct_vr_assets (
   notes text,
   created_by text,
   updated_by text,
+  deleted_at timestamptz,
+  deleted_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -98,19 +100,25 @@ create table if not exists public.hct_requests (
   status text not null default 'Pending' check (status in ('Pending', 'Approved', 'Released', 'Denied', 'Returned')),
   created_by text,
   updated_by text,
+  deleted_at timestamptz,
+  deleted_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.hct_vr_assets
-add column if not exists inventory_piece_id uuid references public.hct_inventory_pieces(id) on delete set null;
+add column if not exists inventory_piece_id uuid references public.hct_inventory_pieces(id) on delete set null,
+add column if not exists deleted_at timestamptz,
+add column if not exists deleted_by text;
 
 alter table public.hct_requests
 add column if not exists position text not null default 'Simulationist',
 add column if not exists designation text,
 add column if not exists immediate_superior text,
 add column if not exists request_items jsonb not null default '[]'::jsonb,
-add column if not exists request_type text not null default 'Deployment';
+add column if not exists request_type text not null default 'Deployment',
+add column if not exists deleted_at timestamptz,
+add column if not exists deleted_by text;
 
 alter table public.hct_requests
 alter column reason drop not null;
@@ -159,7 +167,9 @@ create index if not exists hct_pieces_deleted_idx on public.hct_inventory_pieces
 create index if not exists hct_transactions_item_idx on public.hct_inventory_transactions(inventory_item_id);
 create index if not exists hct_transactions_rooms_idx on public.hct_inventory_transactions(source_room_code, destination_room_code);
 create index if not exists hct_vr_search_idx on public.hct_vr_assets(vr_number, vr_serial_number, brand, model);
+create index if not exists hct_vr_deleted_idx on public.hct_vr_assets(deleted_at);
 create index if not exists hct_requests_status_idx on public.hct_requests(status);
+create index if not exists hct_requests_deleted_idx on public.hct_requests(deleted_at);
 create index if not exists hct_audit_record_idx on public.hct_audit_logs(record_type, record_id);
 
 create or replace function public.hct_set_updated_at()
