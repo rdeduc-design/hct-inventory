@@ -2077,8 +2077,8 @@
         body{font-family:Arial,sans-serif;margin:28px;color:#111}
         .sheet{width:760px;margin:0 auto}
         .brand{display:flex;align-items:center;gap:10px;margin:0 0 6px 0}
-        .brand img{height:42px;width:auto;object-fit:contain}
-        .brand-name{font-size:38px;font-weight:900;color:#111;letter-spacing:-1px}
+        .brand img{height:50px;width:auto;object-fit:contain}
+        .brand-name{font-size:38px;font-weight:500;color:#111;letter-spacing:-1px}
         .teal{height:31px;background:#46c1c6;color:#fff;font-size:18px;display:flex;align-items:center;padding-left:8px;margin:0 4px 20px}
         h1{font-size:20px;text-align:center;margin:16px 0 14px}
         .info,.assets{width:100%;border-collapse:collapse}
