@@ -2088,8 +2088,8 @@
         .assets td:nth-child(2){text-align:left}
         .ack{width:520px;margin:36px auto 44px;font-size:14px;line-height:1.75;text-align:justify}
         .signatures{width:540px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;column-gap:98px;row-gap:42px;text-align:center;font-size:14px}
-        .sig:before{content:"";display:block;border-top:1px solid #111;margin-bottom:7px}
-        .sig b{display:block;margin-top:3px;font-weight:700}
+        .sig .printed-name{display:block;min-height:18px;margin-bottom:5px;font-weight:700}
+        .sig .line{display:block;border-top:1px solid #111;margin-bottom:7px}
         @media print{body{margin:18px}.sheet{width:100%}}
       </style></head><body><div class="sheet">
       <div class="brand"><img src="${logoUrl}" alt="HCT"><span class="pipe">|</span></div>
@@ -2099,12 +2099,16 @@
         <tr><td>Name: ${escapeHtml(request.requester_name || "")}</td><td>Department: ${escapeHtml(request.department_program || "")}</td></tr>
         <tr><td>Position: ${escapeHtml(request.position || "")}</td><td>Date: ${escapeHtml(dateOnly(request.date_requested))}</td></tr>
         <tr><td>Designation: ${escapeHtml(request.designation || "")}</td><td>Immediate Superior: ${escapeHtml(request.immediate_superior || "")}</td></tr>
-        <tr><td colspan="2">Duration of Deployment: ${escapeHtml(request.deployment_duration || "")}</td></tr>
       </table>
       <table class="assets"><thead><tr><th>Asset I.D</th><th>Item</th><th>Quantity</th><th>Serial Number</th></tr></thead>
       <tbody>${items.concat(Array(Math.max(0, 2 - items.length)).fill({})).map((item) => `<tr><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.item_name || "")}</td><td>${item.quantity ? Number(item.quantity || 0) : ""}</td><td>${escapeHtml(item.serial_number || "")}</td></tr>`).join("")}</tbody></table>
       <p class="ack">This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT | Management | HR.</p>
-      <div class="signatures"><div class="sig">Issued by | Admin Assistant</div><div class="sig">Conforme | Signature over Printed Name<b>${escapeHtml(request.requester_name || "")}</b></div><div class="sig">Security Guard on Duty</div><div class="sig">Approved By</div></div>
+      <div class="signatures">
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Issued by | Admin Assistant</div>
+        <div class="sig"><span class="printed-name">${escapeHtml(request.requester_name || "")}</span><span class="line"></span>Conforme | Signature over Printed Name</div>
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Security Guard on Duty</div>
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Approved By</div>
+      </div>
       </div><script>print()</script></body></html>
     `);
     win.document.close();
@@ -2143,8 +2147,7 @@
     ${docxTable([
       ["Name:", request.requester_name || "", "Department:", request.department_program || ""],
       ["Position:", request.position || "", "Date:", dateOnly(request.date_requested)],
-      ["Designation:", request.designation || "", "Immediate Superior:", request.immediate_superior || ""],
-      ["Duration of Deployment:", request.deployment_duration || "", "", ""]
+      ["Designation:", request.designation || "", "Immediate Superior:", request.immediate_superior || ""]
     ])}
     ${docxTable([["Asset I.D", "Item", "Quantity", "Serial Number"]].concat(rows.map((item) => [
       item.asset_tag || "",
@@ -2154,8 +2157,10 @@
     ])), true)}
     ${docxP("This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT | Management | HR.", { spacingBefore: 360, spacingAfter: 420 })}
     ${docxTable([
+      ["", request.requester_name || ""],
       ["________________________", "________________________"],
-      ["Issued by | Admin Assistant", `Conforme | Signature over Printed Name\n${request.requester_name || ""}`],
+      ["Issued by | Admin Assistant", "Conforme | Signature over Printed Name"],
+      ["", ""],
       ["________________________", "________________________"],
       ["Security Guard on Duty", "Approved By"]
     ])}
