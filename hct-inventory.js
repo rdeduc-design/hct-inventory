@@ -2077,12 +2077,11 @@
         body{font-family:Arial,sans-serif;margin:28px;color:#111}
         .sheet{width:760px;margin:0 auto}
         .brand{display:flex;align-items:flex-end;gap:12px;margin:0 0 8px 0}
-        .brand img{width:172px;height:auto;object-fit:contain}
-        .brand .pipe{font-size:26px;color:#9ca3af;line-height:1}
+        .brand img{height:72px;width:auto;object-fit:contain}
         .teal{height:31px;background:#46c1c6;color:#fff;font-size:18px;display:flex;align-items:center;padding-left:8px;margin:0 4px 20px}
-        h1{font-size:20px;text-align:center;margin:0 0 0;text-decoration:underline}
+        h1{font-size:20px;text-align:center;margin:16px 0 14px;text-decoration:underline}
         .info,.assets{width:100%;border-collapse:collapse}
-        .info{margin-bottom:28px}
+        .info{margin-bottom:0}
         .info td{border:1px solid #111;padding:7px 7px;font-size:14px;width:50%}
         .assets th{background:#171b26;color:#fff;border:1px solid #111;padding:10px 8px;font-size:14px;text-align:center}
         .assets td{border:1px solid #111;height:31px;padding:7px 8px;font-size:14px;text-align:center}
