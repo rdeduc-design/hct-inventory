@@ -90,6 +90,7 @@ create table if not exists public.hct_requests (
   position text not null default 'Simulationist',
   date_requested date not null default current_date,
   designation text,
+  deployment_duration text,
   immediate_superior text,
   item_requested text not null,
   quantity_requested numeric not null check (quantity_requested > 0),
@@ -114,6 +115,7 @@ add column if not exists deleted_by text;
 alter table public.hct_requests
 add column if not exists position text not null default 'Simulationist',
 add column if not exists designation text,
+add column if not exists deployment_duration text,
 add column if not exists immediate_superior text,
 add column if not exists request_items jsonb not null default '[]'::jsonb,
 add column if not exists request_type text not null default 'Deployment',
@@ -160,6 +162,21 @@ create table if not exists public.hct_audit_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.hct_rooms (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  floor text not null check (floor in ('5th Floor', '3rd Floor')),
+  name text not null,
+  short text not null,
+  icon text,
+  created_by text,
+  updated_by text,
+  deleted_at timestamptz,
+  deleted_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists hct_inventory_room_idx on public.hct_inventory_items(room_code);
 create index if not exists hct_inventory_status_idx on public.hct_inventory_items(functional_status);
 create index if not exists hct_inventory_category_idx on public.hct_inventory_items(category);
@@ -175,6 +192,8 @@ create index if not exists hct_vr_deleted_idx on public.hct_vr_assets(deleted_at
 create index if not exists hct_requests_status_idx on public.hct_requests(status);
 create index if not exists hct_requests_deleted_idx on public.hct_requests(deleted_at);
 create index if not exists hct_audit_record_idx on public.hct_audit_logs(record_type, record_id);
+create index if not exists hct_rooms_floor_idx on public.hct_rooms(floor);
+create index if not exists hct_rooms_deleted_idx on public.hct_rooms(deleted_at);
 
 create or replace function public.hct_set_updated_at()
 returns trigger
@@ -210,6 +229,11 @@ create trigger hct_requests_updated_at
 before update on public.hct_requests
 for each row execute function public.hct_set_updated_at();
 
+drop trigger if exists hct_rooms_updated_at on public.hct_rooms;
+create trigger hct_rooms_updated_at
+before update on public.hct_rooms
+for each row execute function public.hct_set_updated_at();
+
 alter table public.hct_inventory_items enable row level security;
 alter table public.hct_inventory_pieces enable row level security;
 alter table public.hct_inventory_transactions enable row level security;
@@ -217,6 +241,7 @@ alter table public.hct_vr_assets enable row level security;
 alter table public.hct_requests enable row level security;
 alter table public.hct_request_history enable row level security;
 alter table public.hct_audit_logs enable row level security;
+alter table public.hct_rooms enable row level security;
 
 grant usage on schema public to authenticated;
 revoke all on table public.hct_inventory_items from anon;
@@ -226,6 +251,7 @@ revoke all on table public.hct_vr_assets from anon;
 revoke all on table public.hct_requests from anon;
 revoke all on table public.hct_request_history from anon;
 revoke all on table public.hct_audit_logs from anon;
+revoke all on table public.hct_rooms from anon;
 grant select, insert, update, delete on table public.hct_inventory_items to authenticated;
 grant select, insert, update, delete on table public.hct_inventory_pieces to authenticated;
 grant select, insert, update on table public.hct_inventory_transactions to authenticated;
@@ -233,6 +259,7 @@ grant select, insert, update, delete on table public.hct_vr_assets to authentica
 grant select, insert, update, delete on table public.hct_requests to authenticated;
 grant select, insert, update on table public.hct_request_history to authenticated;
 grant select, insert on table public.hct_audit_logs to authenticated;
+grant select, insert, update, delete on table public.hct_rooms to authenticated;
 
 create or replace function public.hct_user_role()
 returns text
@@ -457,6 +484,35 @@ for insert
 to authenticated
 with check (public.hct_user_role() <> 'viewer');
 
+drop policy if exists "Authenticated can read rooms" on public.hct_rooms;
+create policy "Authenticated can read rooms"
+on public.hct_rooms
+for select
+to authenticated
+using (true);
+
+drop policy if exists "Role can add rooms" on public.hct_rooms;
+create policy "Role can add rooms"
+on public.hct_rooms
+for insert
+to authenticated
+with check (public.hct_user_role() in ('admin', 'supply_officer'));
+
+drop policy if exists "Role can update rooms" on public.hct_rooms;
+create policy "Role can update rooms"
+on public.hct_rooms
+for update
+to authenticated
+using (public.hct_user_role() in ('admin', 'supply_officer'))
+with check (public.hct_user_role() in ('admin', 'supply_officer'));
+
+drop policy if exists "Admin can delete rooms" on public.hct_rooms;
+create policy "Admin can delete rooms"
+on public.hct_rooms
+for delete
+to authenticated
+using (public.hct_user_role() = 'admin');
+
 do $$
 declare
   table_name text;
@@ -467,7 +523,8 @@ declare
     'hct_vr_assets',
     'hct_requests',
     'hct_request_history',
-    'hct_audit_logs'
+    'hct_audit_logs',
+    'hct_rooms'
   ];
 begin
   foreach table_name in array tracked_tables loop

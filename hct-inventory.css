@@ -445,6 +445,13 @@ button:disabled {
   align-items: center;
 }
 
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 18px;
+}
+
 .toolbar {
   margin-bottom: 14px;
   padding: 12px;
@@ -844,20 +851,58 @@ td {
 
 @media (max-width: 720px) {
   .page {
-    padding-top: 16px;
+    padding: 14px 10px 32px;
   }
 
   .topbar {
     gap: 10px;
+    padding: 10px;
   }
 
   .nav {
     order: 3;
     flex-basis: 100%;
+    padding-bottom: 6px;
+  }
+
+  .nav button {
+    padding: 8px 10px;
+    font-size: 0.86rem;
+  }
+
+  .brand {
+    flex: 1 1 calc(100% - 104px);
+  }
+
+  .brand-logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  .brand h1 {
+    font-size: 0.95rem;
+  }
+
+  .brand span {
+    font-size: 0.68rem;
   }
 
   .section-head {
     display: grid;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .section-actions,
+  .quick-actions,
+  .modal-actions {
+    align-items: stretch;
+  }
+
+  .section-actions .btn,
+  .quick-actions .btn,
+  .modal-actions .btn {
+    flex: 1 1 150px;
   }
 
   .grid-cards,
@@ -869,6 +914,16 @@ td {
 
   .request-cart-row {
     grid-template-columns: 1fr;
+  }
+
+  .toolbar {
+    padding: 10px;
+  }
+
+  .toolbar .searchbox,
+  .toolbar select {
+    flex: 1 1 100%;
+    max-width: none;
   }
 
   .hero h2,
@@ -886,8 +941,72 @@ td {
     flex-direction: column;
   }
 
+  .hero-panel,
+  .profile-card,
+  .panel-body,
+  .mini-panel,
+  .big-card {
+    padding: 14px;
+  }
+
+  .big-card {
+    min-height: 172px;
+  }
+
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-backdrop {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 94vh;
+  }
+
+  .modal-head,
+  .modal-body,
+  .modal-actions {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  th,
+  td {
+    padding: 10px 8px;
+    font-size: 0.84rem;
+  }
+
   td {
     min-width: 150px;
+  }
+}
+
+@media (max-width: 420px) {
+  .top-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .icon-button {
+    width: 36px;
+    min-height: 36px;
+  }
+
+  .cart-button::before {
+    display: none;
+  }
+
+  .hero h2,
+  .section-head h2 {
+    font-size: 1.55rem;
+  }
+
+  .btn {
+    min-height: 42px;
   }
 }
 

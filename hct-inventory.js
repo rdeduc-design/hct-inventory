@@ -8,10 +8,11 @@
     vr: "hct_vr_assets",
     requests: "hct_requests",
     requestHistory: "hct_request_history",
-    audit: "hct_audit_logs"
+    audit: "hct_audit_logs",
+    rooms: "hct_rooms"
   };
 
-  const ROOMS = [
+  const DEFAULT_ROOMS = [
     { code: "5F-ICU", floor: "5th Floor", name: "Intensive Care Unit (ICU)", short: "ICU", icon: "&#x1F3E5;" },
     { code: "5F-AHA", floor: "5th Floor", name: "American Heart Association (AHA)", short: "AHA", icon: "&#x2665;" },
     { code: "5F-OR", floor: "5th Floor", name: "Operating Room (OR)", short: "OR", icon: "&#x2695;" },
@@ -24,6 +25,7 @@
     { code: "3F-EMS", floor: "3rd Floor", name: "EMS", short: "EMS", icon: "&#x26D1;" },
     { code: "CSR", floor: "Central Supply", name: "Central Supply Room", short: "CSR", icon: "&#x1F4E6;" }
   ];
+  let ROOMS = DEFAULT_ROOMS.slice();
 
   const ITEM_OPTIONS = {
     ICU: ["Hospital Bed", "Cardiac Monitor", "Defibrillator", "Infusion Pump", "Syringe Pump", "Ventilator", "Oxygen Tank", "Suction Machine", "ECG Machine", "Crash Cart", "IV Stand", "Pulse Oximeter", "Adult Manikin", "Pediatric Manikin", "Neonatal Manikin"],
@@ -67,7 +69,8 @@
       vr: [],
       requests: [],
       requestHistory: [],
-      audit: []
+      audit: [],
+      rooms: []
     },
     filters: {
       search: "",
@@ -82,6 +85,8 @@
   const app = document.getElementById("app");
   const modalRoot = document.getElementById("modal-root");
   const toastEl = document.getElementById("toast");
+  let filterRenderTimer = null;
+  let notificationAudioContext = null;
 
   init();
 
@@ -210,26 +215,29 @@
     state.loading = true;
     if (state.supabase && !state.authUser) {
       state.data = emptyData();
+      syncRooms();
       state.loading = false;
       return;
     }
     if (!state.supabase) {
       state.data = loadLocalData();
+      syncRooms();
       state.loading = false;
       return;
     }
 
     try {
-      const [inventory, pieces, transactions, vr, requests, requestHistory, audit] = await withTimeout(Promise.all([
+      const [inventory, pieces, transactions, vr, requests, requestHistory, audit, rooms] = await withTimeout(Promise.all([
         state.supabase.from(TABLES.inventory).select("*").order("last_updated", { ascending: false }),
         state.supabase.from(TABLES.pieces).select("*").order("piece_number", { ascending: true }),
         state.supabase.from(TABLES.transactions).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.vr).select("*").order("updated_at", { ascending: false }),
         state.supabase.from(TABLES.requests).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.requestHistory).select("*").order("created_at", { ascending: false }),
-        state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300)
+        state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300),
+        state.supabase.from(TABLES.rooms).select("*").order("floor", { ascending: true }).order("name", { ascending: true })
       ]), 3500, "Supabase connection timed out");
-      const errored = [inventory, pieces, transactions, vr, requests, requestHistory, audit].find((result) => result.error);
+      const errored = [inventory, pieces, transactions, vr, requests, requestHistory, audit, rooms].find((result) => result.error);
       if (errored) throw errored.error;
       state.data.inventory = inventory.data || [];
       state.data.pieces = pieces.data || [];
@@ -238,10 +246,13 @@
       state.data.requests = requests.data || [];
       state.data.requestHistory = requestHistory.data || [];
       state.data.audit = audit.data || [];
+      state.data.rooms = rooms.data || [];
+      syncRooms();
       state.dbReady = true;
     } catch (error) {
       state.dbReady = false;
       state.data = loadLocalData();
+      syncRooms();
       notify("Supabase is not ready yet. Using this browser only until the schema is installed.");
       console.warn(error);
     } finally {
@@ -253,12 +264,16 @@
     if (!state.supabase || state.channel) return;
     let channel = state.supabase.channel("hct-inventory-live");
     Object.values(TABLES).forEach((table) => {
-      channel = channel.on("postgres_changes", { event: "*", schema: "public", table }, () => loadData().then(render));
+      channel = channel.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        notify(`${tableLabel(table)} updated.`);
+        loadData().then(() => render({ restoreFilterFocus: true }));
+      });
     });
     state.channel = channel.subscribe();
   }
 
-  function render() {
+  function render(options = {}) {
+    const focus = options.restoreFilterFocus ? activeFilterFocus() : null;
     app.innerHTML = `
       ${topbar()}
       <main class="page">
@@ -268,6 +283,7 @@
     `;
     bindGlobalEvents();
     bindViewEvents();
+    restoreFilterFocus(focus);
   }
 
   function topbar() {
@@ -328,8 +344,8 @@
 
   function homeView() {
     const floors = [
-      { key: "5th Floor", title: "5th Floor", icon: "&#x1F3E5;", text: "ICU, AHA, OR, and DR inventory areas." },
-      { key: "3rd Floor", title: "3rd Floor", icon: "&#x2695;", text: "ICU, OR, DR, VR, Caregiving, and EMS rooms." },
+      { key: "5th Floor", title: "5th Floor", icon: "&#x1F3E5;", text: `${ROOMS.filter((room) => room.floor === "5th Floor").length} inventory room(s), including ICU, AHA, OR, DR, and added rooms.` },
+      { key: "3rd Floor", title: "3rd Floor", icon: "&#x2695;", text: `${ROOMS.filter((room) => room.floor === "3rd Floor").length} inventory room(s), including ICU, OR, DR, VR, Caregiving, EMS, and added rooms.` },
       { key: "Central Supply", title: "Central Supply Room", icon: "&#x1F4E6;", text: "Main stockroom for stored supplies and equipment.", room: "CSR" }
     ];
     return `
@@ -340,6 +356,10 @@
           <p>Smarter Inventory Control at Your Fingertips</p>
         </div>
         ${profileCard()}
+      </section>
+      <section class="quick-actions">
+        <button class="btn primary" data-add-request="Deployment" ${canCreateRequest() ? "" : "disabled"}>New Deployment Request</button>
+        <button class="btn" data-view="deploymentRequests">View Deployment Requests</button>
       </section>
       <section class="grid-cards">
         ${floors.map((floor) => summaryCard(floor)).join("")}
@@ -417,8 +437,9 @@
 
   function floorView(floorName) {
     const rooms = ROOMS.filter((room) => room.floor === floorName);
+    const addAction = ["5th Floor", "3rd Floor"].includes(floorName) ? `<button class="btn primary" data-add-room="${floorName}" ${canManageRooms() ? "" : "disabled"}>Add Room</button>` : "";
     return `
-      ${sectionHead(floorName, "Select a room to open its dedicated inventory page.", `<button class="btn" data-view="home">Back</button>`)}
+      ${sectionHead(floorName, "Select a room to open its dedicated inventory page.", `<button class="btn" data-view="home">Back</button>${addAction}`)}
       <section class="grid-cards room-grid">
         ${rooms.map((room) => roomCard(room)).join("")}
       </section>
@@ -749,19 +770,20 @@
     return `
       <div class="table-wrap">
         <table data-table="requests">
-          <thead><tr><th>Requester</th><th>Type</th><th>Department</th><th>Designation</th><th>Items</th><th>Qty</th><th>Status</th><th>Date</th><th>Superior</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Requester</th><th>Type</th><th>Department</th><th>Designation</th><th>Duration</th><th>Items</th><th>Qty</th><th>Status</th><th>Date</th><th>Superior</th><th>Actions</th></tr></thead>
           <tbody>${rows.map((row) => `
             <tr>
               <td><b>${escapeHtml(row.requester_name)}</b></td>
               <td>${badge(row.request_type || "Deployment")}</td>
               <td>${escapeHtml(row.department_program || "")}</td>
               <td>${escapeHtml(row.designation || "")}</td>
+              <td>${escapeHtml(row.deployment_duration || "")}</td>
               <td>${requestItemsSummary(row)}</td>
               <td>${Number(row.quantity_requested || 0)}</td>
               <td>${requestBadge(row.status)}</td>
               <td>${dateOnly(row.date_requested)}</td>
               <td>${escapeHtml(row.immediate_superior || "")}</td>
-              <td class="table-actions"><button class="btn" data-print-request="${row.id}">Print</button><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-request="${row.id}" ${canDeleteRequest(row) ? "" : "disabled"}>Delete</button></td>
+              <td class="table-actions"><button class="btn" data-print-request="${row.id}">Print</button><button class="btn" data-docx-request="${row.id}">DOCX</button><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-request="${row.id}" ${canDeleteRequest(row) ? "" : "disabled"}>Delete</button></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
@@ -799,10 +821,8 @@
   function bindViewEvents() {
     app.querySelectorAll("[data-floor]").forEach((el) => el.addEventListener("click", () => navigate("floor", el.dataset.floor)));
     app.querySelectorAll("[data-room]").forEach((el) => el.addEventListener("click", () => navigate("room", el.dataset.room)));
-    app.querySelectorAll("[data-filter]").forEach((field) => field.addEventListener("input", () => {
-      state.filters[field.dataset.filter] = field.value;
-      render();
-    }));
+    app.querySelectorAll("[data-filter]").forEach((field) => bindFilterField(field));
+    app.querySelectorAll("[data-add-room]").forEach((el) => el.addEventListener("click", () => openRoomModal(el.dataset.addRoom)));
     app.querySelectorAll("[data-add-item]").forEach((el) => el.addEventListener("click", () => openInventoryModal(null, el.dataset.addItem || state.viewArg || "CSR")));
     app.querySelectorAll("[data-add-stock]").forEach((el) => el.addEventListener("click", () => openAddStockModal(findById(state.data.inventory, el.dataset.addStock))));
     app.querySelectorAll("[data-edit-item]").forEach((el) => el.addEventListener("click", () => openInventoryModal(findById(state.data.inventory, el.dataset.editItem))));
@@ -817,6 +837,7 @@
     app.querySelectorAll("[data-edit-request]").forEach((el) => el.addEventListener("click", () => openRequestModal(findById(state.data.requests, el.dataset.editRequest))));
     app.querySelectorAll("[data-delete-request]").forEach((el) => el.addEventListener("click", () => softDeleteRequest(el.dataset.deleteRequest)));
     app.querySelectorAll("[data-print-request]").forEach((el) => el.addEventListener("click", () => printDeploymentRequest(findById(state.data.requests, el.dataset.printRequest))));
+    app.querySelectorAll("[data-docx-request]").forEach((el) => el.addEventListener("click", () => downloadDeploymentRequestDocx(findById(state.data.requests, el.dataset.docxRequest))));
     app.querySelectorAll("[data-history-request]").forEach((el) => el.addEventListener("click", () => openRequestHistory(el.dataset.historyRequest)));
     app.querySelectorAll("[data-add-vr]").forEach((el) => el.addEventListener("click", () => openVrModal()));
     app.querySelectorAll("[data-edit-vr]").forEach((el) => el.addEventListener("click", () => openVrModal(findById(state.data.vr, el.dataset.editVr))));
@@ -860,6 +881,83 @@
     } else if (vr) {
       state.view = "vrDetail";
       state.viewArg = vr;
+    }
+  }
+
+  function bindFilterField(field) {
+    const eventName = field.classList.contains("searchbox") ? "input" : "change";
+    field.addEventListener(eventName, () => {
+      state.filters[field.dataset.filter] = field.value;
+      if (!field.classList.contains("searchbox")) {
+        render();
+        return;
+      }
+      clearTimeout(filterRenderTimer);
+      filterRenderTimer = setTimeout(() => render({ restoreFilterFocus: true }), 180);
+    });
+  }
+
+  function activeFilterFocus() {
+    const el = document.activeElement;
+    if (!el?.dataset?.filter) return null;
+    return {
+      filter: el.dataset.filter,
+      selectionStart: el.selectionStart,
+      selectionEnd: el.selectionEnd
+    };
+  }
+
+  function restoreFilterFocus(focus) {
+    if (!focus?.filter) return;
+    const el = app.querySelector(`[data-filter="${focus.filter}"]`);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (typeof el.setSelectionRange === "function" && el.type !== "select-one") {
+      const start = focus.selectionStart ?? el.value.length;
+      const end = focus.selectionEnd ?? start;
+      el.setSelectionRange(start, end);
+    }
+  }
+
+  function openRoomModal(floorName) {
+    if (!canManageRooms() || !["5th Floor", "3rd Floor"].includes(floorName)) return;
+    openModal(`Add ${floorName} Room`, `
+      <form id="room-form" class="modal-body">
+        <div class="form-grid">
+          ${field("Room Name", `<input name="name" required placeholder="Example: Skills Laboratory">`)}
+          ${field("Short Label", `<input name="short" required placeholder="Example: Skills Lab">`)}
+          ${field("Room Code", `<input name="code" required placeholder="${floorName === "5th Floor" ? "5F-SKILLS" : "3F-SKILLS"}">`)}
+          ${field("Floor", `<input value="${escapeAttr(floorName)}" disabled><input type="hidden" name="floor" value="${escapeAttr(floorName)}">`)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="room-form">Save Room</button>
+      </div>
+    `, "small");
+    document.getElementById("room-form").addEventListener("submit", saveRoom);
+  }
+
+  async function saveRoom(event) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const floor = form.get("floor");
+    const payload = {
+      code: slugCode(form.get("code")),
+      floor,
+      name: clean(form.get("name")),
+      short: clean(form.get("short")),
+      icon: floor === "5th Floor" ? "&#x1F3E5;" : "&#x2695;",
+      updated_at: new Date().toISOString()
+    };
+    if (!payload.name || !payload.short || !payload.code) return notify("Room name, short label, and code are required.");
+    if (!payload.code.startsWith(floor === "5th Floor" ? "5F-" : "3F-")) return notify(`Room code must start with ${floor === "5th Floor" ? "5F-" : "3F-"}.`);
+    if (ROOMS.some((room) => room.code === payload.code)) return notify("That room code already exists.");
+    const saved = await insertRecord(TABLES.rooms, payload, "created", "room");
+    if (saved) {
+      closeModal();
+      await loadData();
+      navigate("floor", floor);
     }
   }
 
@@ -1163,11 +1261,13 @@
       <div class="modal-actions">
         <button class="btn" data-close-modal>Close</button>
         <button class="btn" data-print-cart ${items.length ? "" : "disabled"}>Print</button>
+        <button class="btn" data-docx-cart ${items.length ? "" : "disabled"}>DOCX</button>
         <button class="btn primary" data-cart-request ${items.length ? "" : "disabled"}>Create Deployment Request</button>
       </div>
     `);
     modalRoot.querySelectorAll("[data-remove-cart-item]").forEach((button) => button.addEventListener("click", () => removeDeploymentCartItem(Number(button.dataset.removeCartItem))));
     modalRoot.querySelector("[data-print-cart]")?.addEventListener("click", () => printDeploymentRequest(cartAsDeploymentRequest()));
+    modalRoot.querySelector("[data-docx-cart]")?.addEventListener("click", () => downloadDeploymentRequestDocx(cartAsDeploymentRequest()));
     modalRoot.querySelector("[data-cart-request]")?.addEventListener("click", () => {
       closeModal();
       openRequestModal(null, "Deployment");
@@ -1183,6 +1283,7 @@
       position: "",
       date_requested: today(),
       designation: "",
+      deployment_duration: "",
       immediate_superior: "",
       item_requested: items.map((item) => item.item_name).join(", "),
       quantity_requested: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
@@ -1560,6 +1661,7 @@
           ${field("Position", `<input name="position" required value="${escapeAttr(request?.position || "Simulationist")}">`)}
           ${field("Date Requested", `<input type="date" name="date_requested" value="${escapeAttr(dateInput(request?.date_requested) || today())}">`)}
           ${field("Designation", `<input name="designation" required value="${escapeAttr(request?.designation || "")}" placeholder="Deployment area or activity">`)}
+          ${requestType === "Deployment" ? field("Duration of Deployment", `<input name="deployment_duration" required value="${escapeAttr(request?.deployment_duration || "")}" placeholder="Example: June 10-12, 2026 or 3 days">`) : ""}
           ${field("Immediate Superior", `<input name="immediate_superior" required value="${escapeAttr(request?.immediate_superior || "")}">`)}
           ${field("Request Type", `<input value="${escapeAttr(requestType)}" disabled><input type="hidden" name="request_type" value="${escapeAttr(requestType)}">`)}
           ${field("Request Status", `<select name="status" ${isAdmin() ? "" : "disabled"}>${optionHtml(REQUEST_STATUSES, request?.status || "Pending")}</select>`)}
@@ -1596,6 +1698,7 @@
       position: clean(form.get("position")),
       date_requested: form.get("date_requested") || today(),
       designation: clean(form.get("designation")),
+      deployment_duration: clean(form.get("deployment_duration")),
       immediate_superior: clean(form.get("immediate_superior")),
       item_requested: requestItems.map((item) => item.item_name).join(", "),
       quantity_requested: quantity,
@@ -1610,10 +1713,41 @@
     if (existing) saved = await updateRecord(TABLES.requests, existing.id, payload, statusAction(existing.status, payload.status), "request", existing);
     else saved = await insertRecord(TABLES.requests, payload, "created", "request");
     if (saved) await addRequestHistory(saved.id, existing?.status || null, payload.status, payload.reason);
+    if (saved && payload.request_type === "Deployment" && payload.status === "Approved") await markApprovedDeploymentItems(saved);
     if (saved && !existing && payload.request_type === "Deployment") clearDeploymentCart();
     closeModal();
     await loadData();
     render();
+  }
+
+  async function markApprovedDeploymentItems(request) {
+    const destination = clean(request.designation) || "approved deployment";
+    const duration = clean(request.deployment_duration);
+    const requester = clean(request.requester_name);
+    const note = `Deployed to ${destination}${duration ? ` for ${duration}` : ""}${requester ? `; requester: ${requester}` : ""}`;
+    for (const requestItem of parseRequestItems(request)) {
+      if (requestItem.inventory_piece_id) {
+        const piece = findPiece(requestItem.inventory_piece_id);
+        if (piece) await updateRecord(TABLES.pieces, piece.id, {
+          remarks: appendUniqueRemark(piece.remarks, note),
+          updated_at: new Date().toISOString()
+        }, "edited", "inventory piece", piece, { movement: "Deployment approved" });
+        continue;
+      }
+      if (requestItem.inventory_item_id) {
+        const item = findById(state.data.inventory, requestItem.inventory_item_id);
+        if (item) await updateRecord(TABLES.inventory, item.id, {
+          remarks: appendUniqueRemark(item.remarks, note),
+          last_updated: new Date().toISOString()
+        }, "edited", "inventory item", item, { movement: "Deployment approved" });
+      }
+    }
+  }
+
+  function appendUniqueRemark(current, note) {
+    const text = clean(current);
+    if (!note || text.includes(note)) return text;
+    return [text, note].filter(Boolean).join(" | ");
   }
 
   function openVrModal(asset) {
@@ -1743,11 +1877,13 @@
       const { data, error } = await state.supabase.from(table).insert(enriched).select().single();
       if (error) return fail(error);
       if (audit) await logAudit(action, recordType, data.id, null, data);
+      notify(recordChangeMessage(action, recordType));
       return data;
     }
     const data = { id: crypto.randomUUID(), created_at: new Date().toISOString(), ...enriched };
     localInsert(table, data);
     if (audit) await logAudit(action, recordType, data.id, null, data);
+    notify(recordChangeMessage(action, recordType));
     return data;
   }
 
@@ -1757,10 +1893,12 @@
       const { data, error } = await state.supabase.from(table).update(enriched).eq("id", id).select().single();
       if (error) return fail(error);
       await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+      notify(recordChangeMessage(action, recordType));
       return data;
     }
     const data = localUpdate(table, id, enriched);
     await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+    notify(recordChangeMessage(action, recordType));
     return data;
   }
 
@@ -1951,6 +2089,7 @@
         .ack{width:520px;margin:36px auto 44px;font-size:14px;line-height:1.75;text-align:justify}
         .signatures{width:540px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;column-gap:98px;row-gap:42px;text-align:center;font-size:14px}
         .sig:before{content:"";display:block;border-top:1px solid #111;margin-bottom:7px}
+        .sig b{display:block;margin-top:3px;font-weight:700}
         @media print{body{margin:18px}.sheet{width:100%}}
       </style></head><body><div class="sheet">
       <div class="brand"><img src="${logoUrl}" alt="HCT"><span class="pipe">|</span></div>
@@ -1960,27 +2099,96 @@
         <tr><td>Name: ${escapeHtml(request.requester_name || "")}</td><td>Department: ${escapeHtml(request.department_program || "")}</td></tr>
         <tr><td>Position: ${escapeHtml(request.position || "")}</td><td>Date: ${escapeHtml(dateOnly(request.date_requested))}</td></tr>
         <tr><td>Designation: ${escapeHtml(request.designation || "")}</td><td>Immediate Superior: ${escapeHtml(request.immediate_superior || "")}</td></tr>
+        <tr><td colspan="2">Duration of Deployment: ${escapeHtml(request.deployment_duration || "")}</td></tr>
       </table>
       <table class="assets"><thead><tr><th>Asset I.D</th><th>Item</th><th>Quantity</th><th>Serial Number</th></tr></thead>
       <tbody>${items.concat(Array(Math.max(0, 2 - items.length)).fill({})).map((item) => `<tr><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.item_name || "")}</td><td>${item.quantity ? Number(item.quantity || 0) : ""}</td><td>${escapeHtml(item.serial_number || "")}</td></tr>`).join("")}</tbody></table>
       <p class="ack">This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT | Management | HR.</p>
-      <div class="signatures"><div class="sig">Issued by | Admin Assistant</div><div class="sig">Conforme | Signature over Printed Name</div><div class="sig">Security Guard on Duty</div><div class="sig">Approved By</div></div>
+      <div class="signatures"><div class="sig">Issued by | Admin Assistant</div><div class="sig">Conforme | Signature over Printed Name<b>${escapeHtml(request.requester_name || "")}</b></div><div class="sig">Security Guard on Duty</div><div class="sig">Approved By</div></div>
       </div><script>print()</script></body></html>
     `);
     win.document.close();
     logAudit("exported", "deployment request", request.id, null, { rows: items.length, format: "print" });
   }
 
+  async function downloadDeploymentRequestDocx(request) {
+    if (!request) return;
+    if (!window.JSZip) return notify("DOCX generator is still loading. Try again in a moment.");
+    const items = parseRequestItems(request);
+    const zip = new window.JSZip();
+    zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`);
+    zip.folder("_rels").file(".rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+    zip.folder("word").file("document.xml", deploymentRequestDocxXml(request, items));
+    const blob = await zip.generateAsync({ type: "blob" });
+    const filename = `employee-accountability-${slugCode(request.requester_name || "request").toLowerCase()}-${today()}.docx`;
+    downloadBlob(filename, blob, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    logAudit("exported", "deployment request", request.id || "deployment-cart", null, { rows: items.length, format: "docx" });
+    notify("DOCX form downloaded.");
+  }
+
+  function deploymentRequestDocxXml(request, items) {
+    const rows = items.concat(Array(Math.max(0, 2 - items.length)).fill({}));
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    ${docxP("Employee Accountability Form", { bold: true, underline: true, center: true, size: 28 })}
+    ${docxTable([
+      ["Name:", request.requester_name || "", "Department:", request.department_program || ""],
+      ["Position:", request.position || "", "Date:", dateOnly(request.date_requested)],
+      ["Designation:", request.designation || "", "Immediate Superior:", request.immediate_superior || ""],
+      ["Duration of Deployment:", request.deployment_duration || "", "", ""]
+    ])}
+    ${docxTable([["Asset I.D", "Item", "Quantity", "Serial Number"]].concat(rows.map((item) => [
+      item.asset_tag || "",
+      item.item_name || "",
+      item.quantity ? String(Number(item.quantity || 0)) : "",
+      item.serial_number || ""
+    ])), true)}
+    ${docxP("This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT | Management | HR.", { spacingBefore: 360, spacingAfter: 420 })}
+    ${docxTable([
+      ["________________________", "________________________"],
+      ["Issued by | Admin Assistant", `Conforme | Signature over Printed Name\n${request.requester_name || ""}`],
+      ["________________________", "________________________"],
+      ["Security Guard on Duty", "Approved By"]
+    ])}
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>
+  </w:body>
+</w:document>`;
+  }
+
+  function docxTable(rows, header) {
+    return `<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>${["top", "left", "bottom", "right", "insideH", "insideV"].map((side) => `<w:${side} w:val="single" w:sz="6" w:space="0" w:color="111111"/>`).join("")}</w:tblBorders></w:tblPr>${rows.map((row, index) => `<w:tr>${row.map((cell) => docxCell(cell, header && index === 0)).join("")}</w:tr>`).join("")}</w:tbl>`;
+  }
+
+  function docxCell(value, header) {
+    const fill = header ? `<w:shd w:fill="171B26"/>` : "";
+    return `<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/>${fill}</w:tcPr>${String(value || "").split("\n").map((line) => docxP(line, { bold: header, color: header ? "FFFFFF" : "111111", center: header })).join("")}</w:tc>`;
+  }
+
+  function docxP(text, options = {}) {
+    const jc = options.center ? `<w:jc w:val="center"/>` : "";
+    const spacing = options.spacingBefore || options.spacingAfter ? `<w:spacing w:before="${options.spacingBefore || 0}" w:after="${options.spacingAfter || 0}"/>` : "";
+    return `<w:p><w:pPr>${jc}${spacing}</w:pPr><w:r><w:rPr>${options.bold ? "<w:b/>" : ""}${options.underline ? `<w:u w:val="single"/>` : ""}${options.color ? `<w:color w:val="${options.color}"/>` : ""}${options.size ? `<w:sz w:val="${options.size}"/>` : ""}</w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+  }
+
   function exportRows(kind) {
     if (kind === "inventory") return [["Item", "Category", "Quantity", "Unit", "Status", "Room", "Asset Tag", "Date Added", "Last Updated", "Remarks"]].concat(filteredInventory(state.view === "room" ? state.viewArg : null, false).map((item) => [item.item_name, item.category, item.quantity, item.unit_measure, item.functional_status, roomLabel(item.room_code), item.asset_tag, dateOnly(item.date_added), dateTime(item.last_updated), item.remarks]));
     if (kind === "vr") return [["VR Number", "Serial", "Brand", "Model", "Room", "Status", "Maintenance", "Notes"]].concat(filteredVr().map((row) => [row.vr_number, row.vr_serial_number, row.brand, row.model, roomLabel(row.assigned_room_code), row.functional_status, dateOnly(row.last_maintenance_date), row.notes]));
-    if (kind === "requests") return [["Type", "Requester", "Department", "Position", "Designation", "Superior", "Items", "Quantity", "Status", "Date"]].concat(filteredRequests(currentRequestType()).map((row) => [row.request_type || "Deployment", row.requester_name, row.department_program, row.position, row.designation, row.immediate_superior, parseRequestItems(row).map((item) => `${item.item_name} x${item.quantity}${item.asset_tag ? ` (${item.asset_tag})` : ""}`).join("; "), row.quantity_requested, row.status, dateOnly(row.date_requested)]));
+    if (kind === "requests") return [["Type", "Requester", "Department", "Position", "Designation", "Duration", "Superior", "Items", "Quantity", "Status", "Date"]].concat(filteredRequests(currentRequestType()).map((row) => [row.request_type || "Deployment", row.requester_name, row.department_program, row.position, row.designation, row.deployment_duration, row.immediate_superior, parseRequestItems(row).map((item) => `${item.item_name} x${item.quantity}${item.asset_tag ? ` (${item.asset_tag})` : ""}`).join("; "), row.quantity_requested, row.status, dateOnly(row.date_requested)]));
     if (kind === "audit") return [["Action", "Record Type", "Changed By", "Timestamp", "Old Value", "New Value"]].concat(state.data.audit.map((row) => [row.action_type, row.record_type, row.changed_by, dateTime(row.created_at), shortJson(row.old_value), shortJson(row.new_value)]));
     return [["Metric", "Value"], ["Inventory Items", activeInventory().length], ["Requests", state.data.requests.length], ["VR Assets", state.data.vr.length]];
   }
 
   function downloadBlob(filename, content, type) {
-    const blob = new Blob([content], { type });
+    const blob = content instanceof Blob ? content : new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2042,6 +2250,24 @@
 
   function activeRequests() {
     return (state.data.requests || []).filter((request) => !request.deleted_at);
+  }
+
+  function syncRooms() {
+    const map = new Map(DEFAULT_ROOMS.map((room) => [room.code, { ...room }]));
+    (state.data.rooms || []).filter((room) => !room.deleted_at).forEach((room) => {
+      map.set(room.code, {
+        code: room.code,
+        floor: room.floor,
+        name: room.name,
+        short: room.short || room.name,
+        icon: room.icon || (room.floor === "5th Floor" ? "&#x1F3E5;" : "&#x2695;")
+      });
+    });
+    const floorOrder = { "5th Floor": 1, "3rd Floor": 2, "Central Supply": 3 };
+    ROOMS = Array.from(map.values()).sort((a, b) => {
+      const floorCompare = (floorOrder[a.floor] || 99) - (floorOrder[b.floor] || 99);
+      return floorCompare || a.name.localeCompare(b.name);
+    });
   }
 
   function activeInventory() {
@@ -2174,7 +2400,7 @@
   }
 
   function emptyData() {
-    return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [] };
+    return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [], rooms: [] };
   }
 
   function loadLocalAccounts() {
@@ -2218,6 +2444,24 @@
     return Object.keys(TABLES).find((key) => TABLES[key] === table);
   }
 
+  function tableLabel(table) {
+    return ({
+      [TABLES.inventory]: "Inventory",
+      [TABLES.pieces]: "Inventory piece",
+      [TABLES.transactions]: "Transaction",
+      [TABLES.vr]: "VR registry",
+      [TABLES.requests]: "Request",
+      [TABLES.requestHistory]: "Request history",
+      [TABLES.audit]: "Audit log",
+      [TABLES.rooms]: "Room list"
+    })[table] || "Record";
+  }
+
+  function recordChangeMessage(action, recordType) {
+    const label = recordType ? recordType.charAt(0).toUpperCase() + recordType.slice(1) : "Record";
+    return `${label} ${action}.`;
+  }
+
   function fail(error) {
     console.warn(error);
     notify(error.message || "Unable to save record.");
@@ -2251,6 +2495,10 @@
 
   function canManageRequests() {
     return Boolean(state.authUser) && isAdmin();
+  }
+
+  function canManageRooms() {
+    return Boolean(state.authUser) && (isAdmin() || state.profile.role === "supply_officer");
   }
 
   function canEditRequest(request) {
@@ -2417,7 +2665,32 @@
   function notify(message) {
     toastEl.textContent = message;
     toastEl.classList.add("show");
+    playNotificationSound();
     setTimeout(() => toastEl.classList.remove("show"), 3200);
+  }
+
+  function playNotificationSound() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      notificationAudioContext = notificationAudioContext || new AudioContext();
+      const ctx = notificationAudioContext;
+      if (ctx.state === "suspended") ctx.resume();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.17);
+    } catch (error) {
+      console.warn(error);
+    }
   }
 
   function dateOnly(value) {
@@ -2488,6 +2761,10 @@
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+  }
+
+  function escapeXml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[char]));
   }
 
   function escapeAttr(value) {
