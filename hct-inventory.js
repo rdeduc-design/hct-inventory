@@ -2067,7 +2067,7 @@
   function printDeploymentRequest(request) {
     if (!request) return;
     const items = parseRequestItems(request);
-    const logoUrl = new URL("hct-logo-navy.png", location.href).href;
+    const logoUrl = new URL("hct-logo-teal.png", location.href).href;
     const requesterAllCaps = (request.requester_name || "").toUpperCase();
     const win = window.open("", "_blank");
     if (!win) return notify("Allow popups to print deployment reports.");
@@ -2076,8 +2076,9 @@
       <style>
         body{font-family:Arial,sans-serif;margin:28px;color:#111}
         .sheet{width:760px;margin:0 auto}
-        .brand{display:flex;align-items:flex-end;gap:12px;margin:0 0 8px 0}
+        .brand{display:flex;align-items:center;gap:10px;margin:0 0 6px 0}
         .brand img{height:42px;width:auto;object-fit:contain}
+        .brand-name{font-size:38px;font-weight:900;color:#111;letter-spacing:-1px}
         .teal{height:31px;background:#46c1c6;color:#fff;font-size:18px;display:flex;align-items:center;padding-left:8px;margin:0 4px 20px}
         h1{font-size:20px;text-align:center;margin:16px 0 14px}
         .info,.assets{width:100%;border-collapse:collapse}
@@ -2092,7 +2093,7 @@
         .sig .line{display:block;border-top:1px solid #111;margin-bottom:7px}
         @media print{body{margin:18px}.sheet{width:100%}}
       </style></head><body><div class="sheet">
-      <div class="brand"><img src="${logoUrl}" alt="HCT"></div>
+      <div class="brand"><img src="${logoUrl}" alt="HCT"><span class="brand-name">HCT</span></div>
       <div class="teal">How Care Transforms</div>
       <table class="info">
         <tr><td>Name: ${escapeHtml(request.requester_name || "")}</td><td>Department: ${escapeHtml(request.department_program || "")}</td></tr>
