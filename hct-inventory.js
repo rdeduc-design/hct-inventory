@@ -232,7 +232,6 @@
         state.supabase.from(TABLES.vr).select("*").order("updated_at", { ascending: false }),
         state.supabase.from(TABLES.requests).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.requestHistory).select("*").order("created_at", { ascending: false }),
-        state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300)
         state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300),
         state.supabase.from(TABLES.rooms).select("*").order("floor", { ascending: true }).order("name", { ascending: true })
       ]), 3500, "Supabase connection timed out");
