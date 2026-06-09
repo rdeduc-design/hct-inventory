@@ -2603,6 +2603,22 @@ function syncRooms() {
 
   function escapeXml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[char]));
+    
   }
-  
+  function activeFilterFocus() {
+    const el = document.activeElement;
+    if (!el?.dataset?.filter) return null;
+    return { filter: el.dataset.filter, selectionStart: el.selectionStart, selectionEnd: el.selectionEnd };
+  }
+
+  function restoreFilterFocus(focus) {
+    if (!focus?.filter) return;
+    const el = app.querySelector(`[data-filter="${focus.filter}"]`);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (typeof el.setSelectionRange === "function" && el.type !== "select-one") {
+      const start = focus.selectionStart ?? el.value.length;
+      el.setSelectionRange(start, focus.selectionEnd ?? start);
+    }
+  }
 })();
