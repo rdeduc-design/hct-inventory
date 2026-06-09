@@ -13,7 +13,6 @@
   --warning: #ca8a04;
   --violet: #6d5bd0;
   --shadow: 0 18px 45px rgba(22, 38, 34, 0.12);
-  --shadow-soft: 0 8px 24px rgba(20, 33, 61, 0.08);
   --radius: 8px;
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -132,7 +131,6 @@ button:disabled {
   white-space: nowrap;
   padding: 8px 12px;
   color: var(--muted);
-  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
 .nav button.active,
@@ -141,14 +139,6 @@ button:disabled {
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
   color: var(--primary-strong);
   font-weight: 700;
-}
-
-.nav button:hover,
-.btn:hover,
-.icon-button:hover,
-.segmented button:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
 }
 
 .top-actions {
@@ -164,48 +154,10 @@ button:disabled {
   font-size: 1.05rem;
 }
 
-.cart-button {
-  position: relative;
-  font-weight: 850;
-  color: var(--primary-strong);
-}
-
-.cart-button::before {
-  content: "Cart";
-  position: absolute;
-  inset: auto auto -17px 50%;
-  transform: translateX(-50%);
-  color: var(--muted);
-  font-size: 0.58rem;
-  font-weight: 750;
-}
-
 .page {
   max-width: 1440px;
   margin: 0 auto;
   padding: 24px clamp(14px, 3vw, 34px) 44px;
-}
-
-.breadcrumbs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 14px;
-  color: var(--muted);
-  font-size: 0.86rem;
-}
-
-.breadcrumbs button {
-  border: 0;
-  background: transparent;
-  color: var(--primary-strong);
-  font-weight: 750;
-  padding: 0;
-}
-
-.breadcrumbs span:last-child {
-  color: var(--text);
-  font-weight: 750;
 }
 
 .hero {
@@ -224,15 +176,6 @@ button:disabled {
     linear-gradient(135deg, color-mix(in srgb, var(--primary) 14%, var(--surface)), var(--surface) 58%),
     var(--surface);
   box-shadow: var(--shadow);
-}
-
-.hero-panel,
-.profile-card,
-.panel,
-.mini-panel,
-.big-card,
-.stat-tile {
-  box-shadow: var(--shadow-soft);
 }
 
 .auth-hero {
@@ -443,13 +386,6 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-}
-
-.quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: -4px 0 18px;
 }
 
 .toolbar {
@@ -729,10 +665,6 @@ td {
   align-items: center;
 }
 
-.request-cart-row.procurement-row {
-  grid-template-columns: minmax(260px, 1fr) minmax(92px, 0.22fr) auto;
-}
-
 .request-cart-row input,
 .request-cart-row select {
   width: 100%;
@@ -743,11 +675,6 @@ td {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-}
-
-.request-tabs {
-  margin: 0 0 12px;
-  background: var(--surface);
 }
 
 .segmented button {
@@ -765,27 +692,6 @@ td {
   border-radius: var(--radius);
   background: var(--surface-2);
   text-align: center;
-}
-
-.detail-actions {
-  margin-top: 16px;
-}
-
-.deleted-summary {
-  margin-top: 16px;
-}
-
-.action-card {
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--primary);
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 8%, var(--surface)), var(--surface));
-  box-shadow: var(--shadow-soft);
-}
-
-.action-card h3 {
-  margin: 0 0 6px;
 }
 
 .qr-box canvas,
@@ -851,58 +757,20 @@ td {
 
 @media (max-width: 720px) {
   .page {
-    padding: 14px 10px 32px;
+    padding-top: 16px;
   }
 
   .topbar {
     gap: 10px;
-    padding: 10px;
   }
 
   .nav {
     order: 3;
     flex-basis: 100%;
-    padding-bottom: 6px;
-  }
-
-  .nav button {
-    padding: 8px 10px;
-    font-size: 0.86rem;
-  }
-
-  .brand {
-    flex: 1 1 calc(100% - 104px);
-  }
-
-  .brand-logo {
-    width: 36px;
-    height: 36px;
-  }
-
-  .brand h1 {
-    font-size: 0.95rem;
-  }
-
-  .brand span {
-    font-size: 0.68rem;
   }
 
   .section-head {
     display: grid;
-    gap: 12px;
-    align-items: start;
-  }
-
-  .section-actions,
-  .quick-actions,
-  .modal-actions {
-    align-items: stretch;
-  }
-
-  .section-actions .btn,
-  .quick-actions .btn,
-  .modal-actions .btn {
-    flex: 1 1 150px;
   }
 
   .grid-cards,
@@ -914,16 +782,6 @@ td {
 
   .request-cart-row {
     grid-template-columns: 1fr;
-  }
-
-  .toolbar {
-    padding: 10px;
-  }
-
-  .toolbar .searchbox,
-  .toolbar select {
-    flex: 1 1 100%;
-    max-width: none;
   }
 
   .hero h2,
@@ -941,72 +799,8 @@ td {
     flex-direction: column;
   }
 
-  .hero-panel,
-  .profile-card,
-  .panel-body,
-  .mini-panel,
-  .big-card {
-    padding: 14px;
-  }
-
-  .big-card {
-    min-height: 172px;
-  }
-
-  .stats-row {
-    grid-template-columns: 1fr;
-  }
-
-  .modal-backdrop {
-    align-items: end;
-    padding: 8px;
-  }
-
-  .modal {
-    width: 100%;
-    max-height: 94vh;
-  }
-
-  .modal-head,
-  .modal-body,
-  .modal-actions {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  th,
-  td {
-    padding: 10px 8px;
-    font-size: 0.84rem;
-  }
-
   td {
     min-width: 150px;
-  }
-}
-
-@media (max-width: 420px) {
-  .top-actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .icon-button {
-    width: 36px;
-    min-height: 36px;
-  }
-
-  .cart-button::before {
-    display: none;
-  }
-
-  .hero h2,
-  .section-head h2 {
-    font-size: 1.55rem;
-  }
-
-  .btn {
-    min-height: 42px;
   }
 }
 
