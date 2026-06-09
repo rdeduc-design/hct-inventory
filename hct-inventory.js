@@ -8,10 +8,11 @@
     vr: "hct_vr_assets",
     requests: "hct_requests",
     requestHistory: "hct_request_history",
-    audit: "hct_audit_logs"
+    audit: "hct_audit_logs",
+    rooms: "hct_rooms"
   };
 
-  const ROOMS = [
+  const DEFAULT_ROOMS = [
     { code: "5F-ICU", floor: "5th Floor", name: "Intensive Care Unit (ICU)", short: "ICU", icon: "&#x1F3E5;" },
     { code: "5F-AHA", floor: "5th Floor", name: "American Heart Association (AHA)", short: "AHA", icon: "&#x2665;" },
     { code: "5F-OR", floor: "5th Floor", name: "Operating Room (OR)", short: "OR", icon: "&#x2695;" },
@@ -24,6 +25,7 @@
     { code: "3F-EMS", floor: "3rd Floor", name: "EMS", short: "EMS", icon: "&#x26D1;" },
     { code: "CSR", floor: "Central Supply", name: "Central Supply Room", short: "CSR", icon: "&#x1F4E6;" }
   ];
+  let ROOMS = DEFAULT_ROOMS.slice();
 
   const ITEM_OPTIONS = {
     ICU: ["Hospital Bed", "Cardiac Monitor", "Defibrillator", "Infusion Pump", "Syringe Pump", "Ventilator", "Oxygen Tank", "Suction Machine", "ECG Machine", "Crash Cart", "IV Stand", "Pulse Oximeter", "Adult Manikin", "Pediatric Manikin", "Neonatal Manikin"],
@@ -67,7 +69,8 @@
       vr: [],
       requests: [],
       requestHistory: [],
-      audit: []
+      audit: [],
+      rooms: []
     },
     filters: {
       search: "",
@@ -210,17 +213,19 @@
     state.loading = true;
     if (state.supabase && !state.authUser) {
       state.data = emptyData();
+      syncRooms();
       state.loading = false;
       return;
     }
     if (!state.supabase) {
       state.data = loadLocalData();
+      syncRooms();
       state.loading = false;
       return;
     }
 
     try {
-      const [inventory, pieces, transactions, vr, requests, requestHistory, audit] = await withTimeout(Promise.all([
+      const [inventory, pieces, transactions, vr, requests, requestHistory, audit, rooms] = await withTimeout(Promise.all([
         state.supabase.from(TABLES.inventory).select("*").order("last_updated", { ascending: false }),
         state.supabase.from(TABLES.pieces).select("*").order("piece_number", { ascending: true }),
         state.supabase.from(TABLES.transactions).select("*").order("created_at", { ascending: false }),
@@ -228,8 +233,10 @@
         state.supabase.from(TABLES.requests).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.requestHistory).select("*").order("created_at", { ascending: false }),
         state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300)
+        state.supabase.from(TABLES.audit).select("*").order("created_at", { ascending: false }).limit(300),
+        state.supabase.from(TABLES.rooms).select("*").order("floor", { ascending: true }).order("name", { ascending: true })
       ]), 3500, "Supabase connection timed out");
-      const errored = [inventory, pieces, transactions, vr, requests, requestHistory, audit].find((result) => result.error);
+      const errored = [inventory, pieces, transactions, vr, requests, requestHistory, audit, rooms].find((result) => result.error);
       if (errored) throw errored.error;
       state.data.inventory = inventory.data || [];
       state.data.pieces = pieces.data || [];
@@ -238,10 +245,13 @@
       state.data.requests = requests.data || [];
       state.data.requestHistory = requestHistory.data || [];
       state.data.audit = audit.data || [];
+      state.data.rooms = rooms.data || [];
+      syncRooms();
       state.dbReady = true;
     } catch (error) {
       state.dbReady = false;
       state.data = loadLocalData();
+      syncRooms();
       notify("Supabase is not ready yet. Using this browser only until the schema is installed.");
       console.warn(error);
     } finally {
@@ -253,20 +263,25 @@
     if (!state.supabase || state.channel) return;
     let channel = state.supabase.channel("hct-inventory-live");
     Object.values(TABLES).forEach((table) => {
-      channel = channel.on("postgres_changes", { event: "*", schema: "public", table }, () => loadData().then(render));
-    });
+      channel = channel.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        notify(`${tableLabel(table)} updated.`);
+        loadData().then(() => render({ restoreFilterFocus: true }));
+      });
     state.channel = channel.subscribe();
   }
 
-  function render() {
+  function render(options = {}) {
+    const focus = options.restoreFilterFocus ? activeFilterFocus() : null;
     app.innerHTML = `
       ${topbar()}
       <main class="page">
+        ${state.loading ? "" : breadcrumbNav()}
         ${state.loading ? emptyState("Loading inventory system", "Fetching shared records.") : route()}
       </main>
     `;
     bindGlobalEvents();
     bindViewEvents();
+    restoreFilterFocus(focus);
   }
 
   function topbar() {
@@ -276,11 +291,12 @@
       ["dashboard", "Dashboard"],
       ["all", "All Inventory"],
       ["vr", "VR Registry"],
-      ["requests", "Requests"],
+      ["deploymentRequests", "Deployment Requests"],
+      ["procurementRequests", "Procurement Requests"],
       ["audit", "Audit Log"],
       ["deleted", "Restore"]
     ] : [];
-    const dbText = state.dbReady ? "Cloud sync active" : "Local preview";
+    const dbText = state.dbReady ? "Real-time sync" : "Local preview only";
     const authText = authed ? escapeHtml(state.authUser.email || state.authUser.name || "Signed in") : "Sign in required";
     return `
       <header class="topbar">
@@ -296,6 +312,7 @@
           ${authed ? `<button data-sign-out>Sign Out</button>` : `<button class="${state.view === "login" ? "active" : ""}" data-view="login">Login</button><button class="${state.view === "signup" ? "active" : ""}" data-view="signup">Sign Up</button>`}
         </nav>
         <div class="top-actions">
+          ${authed ? `<button class="icon-button cart-button" data-cart-open title="Deployment cart">${deploymentCartCount()}</button>` : ""}
           ${authed ? `<button class="icon-button" data-profile title="Access profile">&#x263A;</button>` : ""}
           <button class="icon-button" data-theme title="Toggle dark mode">&#x25D0;</button>
         </div>
@@ -314,7 +331,8 @@
     if (state.view === "itemDetail") return itemDetailView(state.viewArg);
     if (state.view === "pieceDetail") return pieceDetailView(state.viewArg);
     if (state.view === "vrDetail") return vrDetailView(state.viewArg);
-    if (state.view === "requests") return requestsView();
+    if (state.view === "requests" || state.view === "deploymentRequests") return requestsView("Deployment");
+    if (state.view === "procurementRequests") return requestsView("Procurement");
     if (state.view === "audit") return auditView();
     if (state.view === "deleted") return deletedView();
     if (state.view === "login") return authView("login");
@@ -332,10 +350,14 @@
       <section class="hero">
         <div class="hero-panel">
           <div class="eyebrow">HCT Institute</div>
-          <h2>Shared healthcare simulation inventory.</h2>
-          <p>Open the website from any device to view records, submit requests, track stock movement, print QR labels, and monitor equipment status in real time.</p>
+          <h2>HCT Inventory System</h2>
+          <p>Smarter Inventory Control at Your Fingertips</p>
         </div>
         ${profileCard()}
+      </section>
+      <section class="quick-actions">
+        <button class="btn primary" data-add-request="Deployment" ${canCreateRequest() ? "" : "disabled"}>New Deployment Request</button>
+        <button class="btn" data-view="deploymentRequests">View Deployment Requests</button>
       </section>
       <section class="grid-cards">
         ${floors.map((floor) => summaryCard(floor)).join("")}
@@ -380,6 +402,7 @@
         <div class="mini-panel"><h3>Asset Details</h3><p><b>Asset Tag:</b> ${escapeHtml(item.asset_tag || "No asset tag")}</p><p><b>Room:</b> ${escapeHtml(roomLabel(item.room_code))}</p><p><b>Status:</b> ${statusBadge(item.functional_status)}</p><p><b>Quantity:</b> ${Number(item.quantity || 0)} ${escapeHtml(item.unit_measure || "")}</p></div>
         <div class="mini-panel"><h3>Record</h3><p><b>Category:</b> ${escapeHtml(item.category)}</p><p><b>Date Added:</b> ${dateOnly(item.date_added)}</p><p><b>Last Updated:</b> ${dateTime(item.last_updated)}</p><p>${escapeHtml(item.remarks || "")}</p></div>
       </section>
+      ${scannedActionPanel(item)}
     `;
   }
 
@@ -393,6 +416,7 @@
         <div class="mini-panel"><h3>Piece Details</h3><p><b>Item:</b> ${escapeHtml(item.item_name)}</p><p><b>Asset Tag:</b> ${escapeHtml(piece.asset_tag || "")}</p><p><b>Serial:</b> ${escapeHtml(piece.serial_number || "")}</p></div>
         <div class="mini-panel"><h3>Location</h3><p><b>Room:</b> ${escapeHtml(roomLabel(piece.current_room_code || item.room_code))}</p><p><b>Origin:</b> ${escapeHtml(roomLabel(piece.origin_room_code || item.room_code))}</p><p><b>Transferred:</b> ${dateTime(piece.transferred_at)}</p></div>
       </div></section>
+      ${scannedActionPanel(item, piece)}
     `;
   }
 
@@ -400,18 +424,20 @@
     const asset = findById(state.data.vr, id);
     if (!asset) return sectionHead("VR Asset Not Found", "The scanned VR asset could not be found in the current database.", `<button class="btn" data-view="home">Home</button>`);
     return `
-      ${sectionHead(asset.vr_number, "Scanned VR asset record.", `<button class="btn" data-room="${asset.assigned_room_code}">Open Room</button><button class="btn primary" data-qr-vr="${asset.id}">Print Label</button>`)}
+      ${sectionHead(asset.vr_number, "Scanned VR asset record.", `<button class="btn" data-room="${asset.assigned_room_code}">Open Room</button><button class="btn primary" data-qr-vr="${asset.id}">Print Label</button><button class="btn danger" data-delete-vr="${asset.id}" ${canManageVr() ? "" : "disabled"}>Delete</button>`)}
       <section class="analytics-grid">
         <div class="mini-panel"><h3>VR Details</h3><p><b>VR Number:</b> ${escapeHtml(asset.vr_number)}</p><p><b>Serial Number:</b> ${escapeHtml(asset.vr_serial_number || "")}</p><p><b>Room:</b> ${escapeHtml(roomLabel(asset.assigned_room_code))}</p><p><b>Status:</b> ${statusBadge(asset.functional_status)}</p></div>
         <div class="mini-panel"><h3>Device</h3><p><b>Brand:</b> ${escapeHtml(asset.brand || "")}</p><p><b>Model:</b> ${escapeHtml(asset.model || "")}</p><p><b>Last Maintenance:</b> ${dateOnly(asset.last_maintenance_date)}</p><p>${escapeHtml(asset.notes || "")}</p></div>
       </section>
+      <section class="detail-actions"><button class="btn primary" data-cart-vr="${asset.id}">Add to Deployment Request</button></section>
     `;
   }
 
   function floorView(floorName) {
     const rooms = ROOMS.filter((room) => room.floor === floorName);
+    const addAction = ["5th Floor", "3rd Floor"].includes(floorName) ? `<button class="btn primary" data-add-room="${floorName}" ${canManageRooms() ? "" : "disabled"}>Add Room</button>` : "";
     return `
-      ${sectionHead(floorName, "Select a room to open its dedicated inventory page.", `<button class="btn" data-view="home">Back</button>`)}
+      ${sectionHead(floorName, "Select a room to open its dedicated inventory page.", `<button class="btn" data-view="home">Back</button>${addAction}`)}
       <section class="grid-cards room-grid">
         ${rooms.map((room) => roomCard(room)).join("")}
       </section>
@@ -442,7 +468,7 @@
 
   function dashboardView() {
     const active = activeInventory();
-    const requests = state.data.requests;
+    const requests = activeRequests();
     const totals = {
       items: active.length,
       functional: active.filter((item) => item.functional_status === "Functional").length,
@@ -484,14 +510,18 @@
     `;
   }
 
-  function requestsView() {
-    const requests = filteredRequests();
+ function requestsView(type) {
+    const requests = filteredRequests(type);
     const canCreate = canCreateRequest();
+    const isDeployment = type === "Deployment";
     return `
-      ${sectionHead("Deployment & Procurement Requests", "Request inventory-backed items in a deployment or procurement cart. Admin approval is required before release.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request ${canCreate ? "" : "disabled"}>New Request</button>`)}
+      ${sectionHead(`${type} Requests`, isDeployment ? "Build deployment requests from scanned items or inventory-backed selections." : "Type procurement requests for items that are not yet part of the inventory.", `<button class="btn" data-export="requests">Excel</button><button class="btn" data-pdf="requests">PDF</button><button class="btn primary" data-add-request="${type}" ${canCreate ? "" : "disabled"}>New ${type} Request</button>`)}
+      <div class="segmented request-tabs">
+        <button data-view="deploymentRequests" class="${isDeployment ? "active" : ""}">Deployment</button>
+        <button data-view="procurementRequests" class="${!isDeployment ? "active" : ""}">Procurement</button>
+      </div>
       <div class="toolbar">
         <input class="searchbox" data-filter="search" value="${escapeAttr(state.filters.search)}" placeholder="Search requester, department, item, reason">
-        <select data-filter="requestType">${optionHtml(["All"].concat(REQUEST_TYPES), state.filters.requestType)}</select>
         <select data-filter="requestStatus">${optionHtml(["All"].concat(REQUEST_STATUSES), state.filters.requestStatus)}</select>
       </div>
       <section class="panel">
@@ -512,10 +542,19 @@
 
   function deletedView() {
     const rows = state.data.inventory.filter((item) => item.deleted_at);
+    const requestRows = state.data.requests.filter((request) => request.deleted_at);
+    const vrRows = state.data.vr.filter((asset) => asset.deleted_at);
+    const pieceRows = state.data.pieces.filter((piece) => piece.deleted_at);
+    const total = rows.length + requestRows.length + vrRows.length + pieceRows.length;
     return `
-      ${sectionHead("Deleted Inventory", "Soft-deleted inventory records can be restored by an Admin.", "")}
+      ${sectionHead("Deleted Inventory", "Soft-deleted records can be restored or permanently deleted by an Admin.", `<button class="btn danger" data-purge-soft-deletes ${isAdmin() && total ? "" : "disabled"}>Delete All Soft-Deletes</button>`)}
       <section class="panel">
         ${rows.length ? inventoryTable(rows, false, true) : emptyState("No deleted records", "Deleted inventory will appear here for restore review.")}
+      </section>
+      <section class="analytics-grid deleted-summary">
+        ${softDeletedPanel("Deleted Requests", requestRows.map((row) => `${row.requester_name || "Request"} - ${row.item_requested || ""}`))}
+        ${softDeletedPanel("Deleted VR Assets", vrRows.map((row) => `${row.vr_number || "VR"} - ${row.vr_serial_number || ""}`))}
+        ${softDeletedPanel("Deleted Pieces", pieceRows.map((row) => `${row.asset_tag || "Piece"} - ${row.serial_number || ""}`))}
       </section>
     `;
   }
@@ -676,7 +715,7 @@
               <td>${statusBadge(row.functional_status)}</td>
               <td>${dateOnly(row.last_maintenance_date)}</td>
               <td>${escapeHtml(row.notes || "")}</td>
-              <td class="table-actions"><button class="btn" data-qr-vr="${row.id}">QR</button><button class="btn" data-edit-vr="${row.id}" ${canManageVr() ? "" : "disabled"}>Edit</button></td>
+              <td class="table-actions"><button class="btn" data-qr-vr="${row.id}">QR</button><button class="btn" data-edit-vr="${row.id}" ${canManageVr() ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-vr="${row.id}" ${canManageVr() ? "" : "disabled"}>Delete</button></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
@@ -687,19 +726,20 @@
     return `
       <div class="table-wrap">
         <table data-table="requests">
-          <thead><tr><th>Requester</th><th>Type</th><th>Department</th><th>Designation</th><th>Items</th><th>Qty</th><th>Status</th><th>Date</th><th>Superior</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Requester</th><th>Type</th><th>Department</th><th>Designation</th><th>Duration</th><th>Items</th><th>Qty</th><th>Status</th><th>Date</th><th>Superior</th><th>Actions</th></tr></thead>
           <tbody>${rows.map((row) => `
             <tr>
               <td><b>${escapeHtml(row.requester_name)}</b></td>
               <td>${badge(row.request_type || "Deployment")}</td>
               <td>${escapeHtml(row.department_program || "")}</td>
               <td>${escapeHtml(row.designation || "")}</td>
+              <td>${escapeHtml(row.deployment_duration || "")}</td>
               <td>${requestItemsSummary(row)}</td>
               <td>${Number(row.quantity_requested || 0)}</td>
               <td>${requestBadge(row.status)}</td>
               <td>${dateOnly(row.date_requested)}</td>
               <td>${escapeHtml(row.immediate_superior || "")}</td>
-              <td class="table-actions"><button class="btn" data-print-request="${row.id}">Print</button><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button></td>
+              <td class="table-actions"><button class="btn" data-print-request="${row.id}">Print</button><button class="btn" data-docx-request="${row.id}">DOCX</button><button class="btn" data-history-request="${row.id}">History</button><button class="btn" data-edit-request="${row.id}" ${canEditRequest(row) ? "" : "disabled"}>Edit</button><button class="btn danger" data-delete-request="${row.id}" ${canDeleteRequest(row) ? "" : "disabled"}>Delete</button></td>
             </tr>`).join("")}</tbody>
         </table>
       </div>
@@ -726,9 +766,10 @@
   }
 
   function bindGlobalEvents() {
-    app.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.view)));
+    app.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.view, button.dataset.crumbArg)));
     app.querySelector("[data-theme]")?.addEventListener("click", toggleTheme);
     app.querySelector("[data-profile]")?.addEventListener("click", openProfileModal);
+    app.querySelector("[data-cart-open]")?.addEventListener("click", openDeploymentCartModal);
     app.querySelector("[data-sign-out]")?.addEventListener("click", signOut);
     app.querySelectorAll("[data-profile-field]").forEach((field) => field.addEventListener("change", updateProfileFromField));
   }
@@ -749,7 +790,7 @@
     app.querySelectorAll("[data-move-piece]").forEach((el) => el.addEventListener("click", () => openPieceMoveModal(findPiece(el.dataset.movePiece))));
     app.querySelectorAll("[data-edit-piece]").forEach((el) => el.addEventListener("click", () => openPieceModal(findPiece(el.dataset.editPiece))));
     app.querySelectorAll("[data-delete-piece]").forEach((el) => el.addEventListener("click", () => deletePiece(el.dataset.deletePiece)));
-    app.querySelectorAll("[data-add-request]").forEach((el) => el.addEventListener("click", () => openRequestModal()));
+    app.querySelectorAll("[data-add-request]").forEach((el) => el.addEventListener("click", () => openRequestModal(null, el.dataset.addRequest || currentRequestType() || "Deployment")));
     app.querySelectorAll("[data-edit-request]").forEach((el) => el.addEventListener("click", () => openRequestModal(findById(state.data.requests, el.dataset.editRequest))));
     app.querySelectorAll("[data-print-request]").forEach((el) => el.addEventListener("click", () => printDeploymentRequest(findById(state.data.requests, el.dataset.printRequest))));
     app.querySelectorAll("[data-history-request]").forEach((el) => el.addEventListener("click", () => openRequestHistory(el.dataset.historyRequest)));
@@ -763,6 +804,15 @@
     app.querySelectorAll("[data-export]").forEach((el) => el.addEventListener("click", () => exportView(el.dataset.export)));
     app.querySelectorAll("[data-pdf]").forEach((el) => el.addEventListener("click", () => exportPdf(el.dataset.pdf)));
     app.querySelector("#auth-form")?.addEventListener("submit", (event) => saveAuth(event, state.view));
+    app.querySelectorAll("[data-add-room]").forEach((el) => el.addEventListener("click", () => openRoomModal(el.dataset.addRoom)));
+    app.querySelectorAll("[data-delete-request]").forEach((el) => el.addEventListener("click", () => softDeleteRequest(el.dataset.deleteRequest)));
+    app.querySelectorAll("[data-docx-request]").forEach((el) => el.addEventListener("click", () => downloadDeploymentRequestDocx(findById(state.data.requests, el.dataset.docxRequest))));
+    app.querySelectorAll("[data-delete-vr]").forEach((el) => el.addEventListener("click", () => softDeleteVr(el.dataset.deleteVr)));
+    app.querySelectorAll("[data-purge-soft-deletes]").forEach((el) => el.addEventListener("click", purgeSoftDeletes));
+    app.querySelectorAll("[data-move-scanned-item]").forEach((el) => el.addEventListener("click", () => openTransactionModal(findById(state.data.inventory, el.dataset.moveScannedItem), "Transfer")));
+    app.querySelectorAll("[data-cart-item]").forEach((el) => el.addEventListener("click", () => addItemToDeploymentCart(findById(state.data.inventory, el.dataset.cartItem))));
+    app.querySelectorAll("[data-cart-piece]").forEach((el) => el.addEventListener("click", () => addPieceToDeploymentCart(findPiece(el.dataset.cartPiece))));
+    app.querySelectorAll("[data-cart-vr]").forEach((el) => el.addEventListener("click", () => addVrToDeploymentCart(findById(state.data.vr, el.dataset.cartVr))));
   }
 
   function navigate(view, arg) {
@@ -1335,7 +1385,10 @@
     await createTransaction({ item, transaction_type: "Transfer", quantity, source_room_code: item.room_code, destination_room_code: destinationRoomCode, notes }, false);
   }
 
-  function openRequestModal(request) {
+  function openRequestModal(request, defaultType) {
+    const requestType = request?.request_type || defaultType || currentRequestType() || "Deployment";
+    const cartItems = !request && requestType === "Deployment" ? loadDeploymentCart() : [];
+    const items = request ? parseRequestItems(request) : (cartItems.length ? cartItems : [{}]);
     const items = parseRequestItems(request);
     openModal(`${request ? "Edit" : "New"} Request`, `
       <form id="request-form" class="modal-body">
@@ -1345,8 +1398,9 @@
           ${field("Position", `<input name="position" required value="${escapeAttr(request?.position || "Simulationist")}">`)}
           ${field("Date Requested", `<input type="date" name="date_requested" value="${escapeAttr(dateInput(request?.date_requested) || today())}">`)}
           ${field("Designation", `<input name="designation" required value="${escapeAttr(request?.designation || "")}" placeholder="Deployment area or activity">`)}
+          ${requestType === "Deployment" ? field("Duration of Deployment", `<input name="deployment_duration" required value="${escapeAttr(request?.deployment_duration || "")}" placeholder="Example: June 10-12, 2026 or 3 days">`) : ""}
           ${field("Immediate Superior", `<input name="immediate_superior" required value="${escapeAttr(request?.immediate_superior || "")}">`)}
-          ${field("Request Type", `<select name="request_type">${optionHtml(REQUEST_TYPES, request?.request_type || "Deployment")}</select>`)}
+          ${field("Request Type", `<input value="${escapeAttr(requestType)}" disabled><input type="hidden" name="request_type" value="${escapeAttr(requestType)}">`)}
           ${field("Request Status", `<select name="status" ${isAdmin() ? "" : "disabled"}>${optionHtml(REQUEST_STATUSES, request?.status || "Pending")}</select>`)}
           <div class="field full">
             <span>Items to Request</span>
@@ -1379,6 +1433,7 @@
       position: clean(form.get("position")),
       date_requested: form.get("date_requested") || today(),
       designation: clean(form.get("designation")),
+      deployment_duration: clean(form.get("deployment_duration")),
       immediate_superior: clean(form.get("immediate_superior")),
       item_requested: requestItems.map((item) => item.item_name).join(", "),
       quantity_requested: quantity,
@@ -1393,6 +1448,8 @@
     if (existing) saved = await updateRecord(TABLES.requests, existing.id, payload, statusAction(existing.status, payload.status), "request", existing);
     else saved = await insertRecord(TABLES.requests, payload, "created", "request");
     if (saved) await addRequestHistory(saved.id, existing?.status || null, payload.status, payload.reason);
+    if (saved && payload.request_type === "Deployment" && payload.status === "Approved") await markApprovedDeploymentItems(saved);
+    if (saved && !existing && payload.request_type === "Deployment") clearDeploymentCart();
     closeModal();
     await loadData();
     render();
@@ -1510,11 +1567,13 @@
       const { data, error } = await state.supabase.from(table).insert(enriched).select().single();
       if (error) return fail(error);
       if (audit) await logAudit(action, recordType, data.id, null, data);
+      notify(recordChangeMessage(action, recordType));
       return data;
     }
     const data = { id: crypto.randomUUID(), created_at: new Date().toISOString(), ...enriched };
     localInsert(table, data);
     if (audit) await logAudit(action, recordType, data.id, null, data);
+    notify(recordChangeMessage(action, recordType));
     return data;
   }
 
@@ -1524,10 +1583,12 @@
       const { data, error } = await state.supabase.from(table).update(enriched).eq("id", id).select().single();
       if (error) return fail(error);
       await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+      notify(recordChangeMessage(action, recordType));
       return data;
     }
     const data = localUpdate(table, id, enriched);
     await logAudit(action, recordType, id, oldValue || null, { ...data, ...(extraNewValue || {}) });
+    notify(recordChangeMessage(action, recordType));
     return data;
   }
 
@@ -1738,7 +1799,7 @@
   }
 
   function downloadBlob(filename, content, type) {
-    const blob = new Blob([content], { type });
+    const blob = content instanceof Blob ? content : new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1750,7 +1811,7 @@
   function filteredInventory(roomCode, includeDeleted) {
     let rows = includeDeleted ? state.data.inventory.slice() : activeInventory();
     if (!includeDeleted) rows = rows.concat(virtualVrInventoryRows(roomCode === "3F-VR"));
-    if (roomCode) rows = rows.filter((item) => item.room_code === roomCode);
+    if (roomCode) rows = rows.map((item) => scopedInventoryRow(item, roomCode)).filter(Boolean);
     const term = state.filters.search.toLowerCase();
     if (term) rows = rows.filter((item) => [item.item_name, item.category, item.functional_status, roomLabel(item.room_code), item.asset_tag, item.remarks].some((value) => String(value || "").toLowerCase().includes(term)));
     if (state.filters.category !== "All") rows = rows.filter((item) => item.category === state.filters.category);
@@ -1763,23 +1824,41 @@
 
   function filteredVr() {
     const term = state.filters.search.toLowerCase();
-    return state.data.vr.filter((row) => {
+    return state.data.vr.filter((row) => !row.deleted_at).filter((row) => {
       const matchesTerm = !term || [row.vr_number, row.vr_serial_number, row.brand, row.model].some((value) => String(value || "").toLowerCase().includes(term));
       const matchesStatus = state.filters.status === "All" || row.functional_status === state.filters.status;
       return matchesTerm && matchesStatus;
     });
   }
 
-  function filteredRequests() {
+  function filteredRequests(type) {
     const term = state.filters.search.toLowerCase();
-    return state.data.requests.filter((row) => {
+    return activeRequests().filter((row) => {
       const matchesTerm = !term || [row.request_type, row.requester_name, row.department_program, row.position, row.designation, row.immediate_superior, row.item_requested, row.reason, parseRequestItems(row).map((item) => `${item.item_name} ${item.asset_tag} ${item.serial_number} ${roomLabel(item.room_code)}`).join(" ")].some((value) => String(value || "").toLowerCase().includes(term));
-      const matchesType = state.filters.requestType === "All" || (row.request_type || "Deployment") === state.filters.requestType;
+      const matchesType = !type || type === "All" || (row.request_type || "Deployment") === type;
       const matchesStatus = state.filters.requestStatus === "All" || row.status === state.filters.requestStatus;
       return matchesTerm && matchesType && matchesStatus;
     });
   }
-
+  
+function syncRooms() {
+    const map = new Map(DEFAULT_ROOMS.map((room) => [room.code, { ...room }]));
+    (state.data.rooms || []).filter((room) => !room.deleted_at).forEach((room) => {
+      map.set(room.code, {
+        code: room.code,
+        floor: room.floor,
+        name: room.name,
+        short: room.short || room.name,
+        icon: room.icon || (room.floor === "5th Floor" ? "&#x1F3E5;" : "&#x2695;")
+      });
+    });
+    const floorOrder = { "5th Floor": 1, "3rd Floor": 2, "Central Supply": 3 };
+    ROOMS = Array.from(map.values()).sort((a, b) => {
+      const fc = (floorOrder[a.floor] || 99) - (floorOrder[b.floor] || 99);
+      return fc || a.name.localeCompare(b.name);
+    });
+  }
+  
   function activeInventory() {
     return state.data.inventory.filter((item) => !item.deleted_at);
   }
@@ -1824,11 +1903,12 @@
 
   function inventoryPieces(item) {
     if (!item) return [];
+    if (Array.isArray(item._visible_pieces)) return item._visible_pieces;
     return activePieces()
       .filter((piece) => piece.inventory_item_id === item.id)
       .sort((a, b) => Number(a.piece_number || 0) - Number(b.piece_number || 0));
   }
-
+  
   function findPiece(id) {
     return (state.data.pieces || []).find((piece) => piece.id === id);
   }
@@ -1909,7 +1989,7 @@
   }
 
   function emptyData() {
-    return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [] };
+    return { inventory: [], pieces: [], transactions: [], vr: [], requests: [], requestHistory: [], audit: [], rooms: [] };
   }
 
   function loadLocalAccounts() {
@@ -2126,6 +2206,7 @@
   function notify(message) {
     toastEl.textContent = message;
     toastEl.classList.add("show");
+    playNotificationSound();
     setTimeout(() => toastEl.classList.remove("show"), 3200);
   }
 
@@ -2200,4 +2281,329 @@
   function escapeAttr(value) {
     return escapeHtml(value);
   }
+
+  function breadcrumbNav() {
+    if (!state.authUser) return "";
+    const crumbs = [{ label: "Home", view: "home" }];
+    if (state.view === "floor") crumbs.push({ label: state.viewArg || "Floor" });
+    if (state.view === "room") {
+      const room = getRoom(state.viewArg);
+      if (room) crumbs.push({ label: room.floor, view: "floor", arg: room.floor }, { label: room.name });
+    }
+    if (state.view === "all") crumbs.push({ label: "All Inventory" });
+    if (state.view === "dashboard") crumbs.push({ label: "Dashboard" });
+    if (state.view === "vr") crumbs.push({ label: "VR Registry" });
+    if (state.view === "deploymentRequests" || state.view === "requests") crumbs.push({ label: "Deployment Requests" });
+    if (state.view === "procurementRequests") crumbs.push({ label: "Procurement Requests" });
+    if (state.view === "audit") crumbs.push({ label: "Audit Log" });
+    if (state.view === "deleted") crumbs.push({ label: "Restore" });
+    if (state.view === "itemDetail") {
+      const item = findById(state.data.inventory, state.viewArg);
+      crumbs.push({ label: roomLabel(item?.room_code) || "Inventory", view: item?.room_code ? "room" : "all", arg: item?.room_code }, { label: item?.item_name || "Item" });
+    }
+    if (state.view === "pieceDetail") {
+      const piece = findPiece(state.viewArg);
+      const item = piece ? findById(state.data.inventory, piece.inventory_item_id) : null;
+      crumbs.push({ label: roomLabel(piece?.current_room_code || item?.room_code) || "Inventory", view: item?.room_code ? "room" : "all", arg: piece?.current_room_code || item?.room_code }, { label: piece?.asset_tag || "Piece" });
+    }
+    if (state.view === "vrDetail") crumbs.push({ label: "VR Registry", view: "vr" }, { label: findById(state.data.vr, state.viewArg)?.vr_number || "VR Asset" });
+    return `<nav class="breadcrumbs" aria-label="Breadcrumb">${crumbs.map((crumb, index) => index < crumbs.length - 1 && crumb.view ? `<button data-view="${crumb.view}" ${crumb.arg ? `data-crumb-arg="${escapeAttr(crumb.arg)}"` : ""}>${escapeHtml(crumb.label)}</button>` : `<span>${escapeHtml(crumb.label)}</span>`).join("<span>/</span>")}</nav>`;
+  }
+
+  function scannedActionPanel(item, piece) {
+    if (!item) return "";
+    const moveButton = piece
+      ? `<button class="btn primary" data-move-piece="${piece.id}" ${canTransact(item) ? "" : "disabled"}>Move to Another Room</button>`
+      : `<button class="btn primary" data-move-scanned-item="${item.id}" ${canTransact(item) ? "" : "disabled"}>Move to Another Room</button>`;
+    const cartButton = piece
+      ? `<button class="btn success" data-cart-piece="${piece.id}">Add to Deployment Request</button>`
+      : `<button class="btn success" data-cart-item="${item.id}">Add to Deployment Request</button>`;
+    return `<section class="detail-actions"><div class="action-card"><h3>Item Actions</h3><p class="muted">Move this scanned record or collect it in your personal deployment cart.</p><div class="section-actions">${moveButton}${cartButton}<button class="btn" data-view="deploymentRequests">Open Deployment Requests</button></div></div></section>`;
+  }
+
+  function softDeletedPanel(title, rows) {
+    return `<div class="mini-panel"><h3>${escapeHtml(title)}</h3>${rows.length ? `<div class="bar-list">${rows.slice(0, 8).map((row) => `<div>${escapeHtml(row)}</div>`).join("")}${rows.length > 8 ? `<p class="muted">+${rows.length - 8} more</p>` : ""}</div>` : `<p class="muted">None.</p>`}</div>`;
+  }
+
+  function deploymentCartKey() {
+    const userKey = (state.authUser?.email || state.authUser?.name || profileName() || "guest").toLowerCase();
+    return `hct-deployment-cart:${userKey}`;
+  }
+
+  function deploymentCartCount() {
+    return loadDeploymentCart().length || "0";
+  }
+
+  function loadDeploymentCart() {
+    try { return JSON.parse(localStorage.getItem(deploymentCartKey()) || "[]"); } catch { return []; }
+  }
+
+  function saveDeploymentCart(items) {
+    localStorage.setItem(deploymentCartKey(), JSON.stringify(items));
+  }
+
+  function clearDeploymentCart() {
+    localStorage.removeItem(deploymentCartKey());
+  }
+
+  function addDeploymentCartItem(nextItem) {
+    if (!nextItem?.item_name) return notify("Unable to add this item to the deployment cart.");
+    const items = loadDeploymentCart();
+    const key = nextItem.inventory_piece_id || nextItem.inventory_item_id || nextItem.asset_tag || nextItem.item_name;
+    const existing = items.find((item) => (item.inventory_piece_id || item.inventory_item_id || item.asset_tag || item.item_name) === key);
+    if (existing) existing.quantity = Math.max(1, Number(existing.quantity || 1));
+    else items.push(nextItem);
+    saveDeploymentCart(items);
+    notify(`Added to your deployment cart (${items.length} item${items.length === 1 ? "" : "s"}).`);
+    render();
+  }
+
+  function removeDeploymentCartItem(index) {
+    const items = loadDeploymentCart();
+    items.splice(index, 1);
+    saveDeploymentCart(items);
+    closeModal();
+    render();
+    openDeploymentCartModal();
+  }
+
+  function openDeploymentCartModal() {
+    const items = loadDeploymentCart();
+    openModal("Deployment Cart", `
+      <div class="modal-body">
+        ${items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Qty</th><th>Asset Tag</th><th>Serial</th><th>Room</th><th>Action</th></tr></thead><tbody>${items.map((item, index) => `<tr><td><b>${escapeHtml(item.item_name || "")}</b></td><td>${Number(item.quantity || 0)}</td><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.serial_number || "")}</td><td>${escapeHtml(roomLabel(item.room_code))}</td><td><button class="btn danger" data-remove-cart-item="${index}">Remove</button></td></tr>`).join("")}</tbody></table></div>` : emptyState("Your deployment cart is empty", "Scan an item QR code, then add it to your deployment cart.")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Close</button>
+        <button class="btn" data-print-cart ${items.length ? "" : "disabled"}>Print</button>
+        <button class="btn" data-docx-cart ${items.length ? "" : "disabled"}>DOCX</button>
+        <button class="btn primary" data-cart-request ${items.length ? "" : "disabled"}>Create Deployment Request</button>
+      </div>
+    `);
+    modalRoot.querySelectorAll("[data-remove-cart-item]").forEach((button) => button.addEventListener("click", () => removeDeploymentCartItem(Number(button.dataset.removeCartItem))));
+    modalRoot.querySelector("[data-print-cart]")?.addEventListener("click", () => printDeploymentRequest(cartAsDeploymentRequest()));
+    modalRoot.querySelector("[data-docx-cart]")?.addEventListener("click", () => downloadDeploymentRequestDocx(cartAsDeploymentRequest()));
+    modalRoot.querySelector("[data-cart-request]")?.addEventListener("click", () => { closeModal(); openRequestModal(null, "Deployment"); });
+  }
+
+  function cartAsDeploymentRequest() {
+    const items = loadDeploymentCart();
+    return {
+      id: "deployment-cart",
+      requester_name: profileName(),
+      department_program: "",
+      position: "",
+      date_requested: today(),
+      designation: "",
+      deployment_duration: "",
+      immediate_superior: "",
+      item_requested: items.map((item) => item.item_name).join(", "),
+      quantity_requested: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+      request_items: items,
+      request_type: "Deployment",
+      status: "Pending"
+    };
+  }
+
+  function addItemToDeploymentCart(item) {
+    if (!item) return;
+    addDeploymentCartItem({ item_name: item.item_name, quantity: 1, serial_number: item.serial_number || "", asset_tag: item.asset_tag || "", room_code: item.room_code || "", inventory_item_id: item.id, inventory_piece_id: "" });
+  }
+
+  function addPieceToDeploymentCart(piece) {
+    const item = piece ? findById(state.data.inventory, piece.inventory_item_id) : null;
+    if (!piece || !item) return;
+    addDeploymentCartItem({ item_name: item.item_name, quantity: 1, serial_number: piece.serial_number || "", asset_tag: piece.asset_tag || item.asset_tag || "", room_code: piece.current_room_code || item.room_code || "", inventory_item_id: item.id, inventory_piece_id: piece.id });
+  }
+
+  function addVrToDeploymentCart(asset) {
+    if (!asset) return;
+    addDeploymentCartItem({ item_name: "VR Headset", quantity: 1, serial_number: asset.vr_serial_number || "", asset_tag: makeVrAssetTag(asset), room_code: asset.assigned_room_code || "3F-VR", inventory_item_id: asset.inventory_item_id || "", inventory_piece_id: asset.inventory_piece_id || "" });
+  }
+
+  function openRoomModal(floorName) {
+    if (!canManageRooms() || !["5th Floor", "3rd Floor"].includes(floorName)) return;
+    openModal(`Add ${floorName} Room`, `
+      <form id="room-form" class="modal-body">
+        <div class="form-grid">
+          ${field("Room Name", `<input name="name" required placeholder="Example: Skills Laboratory">`)}
+          ${field("Short Label", `<input name="short" required placeholder="Example: Skills Lab">`)}
+          ${field("Room Code", `<input name="code" required placeholder="${floorName === "5th Floor" ? "5F-SKILLS" : "3F-SKILLS"}">`)}
+          ${field("Floor", `<input value="${escapeAttr(floorName)}" disabled><input type="hidden" name="floor" value="${escapeAttr(floorName)}">`)}
+        </div>
+      </form>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn primary" form="room-form">Save Room</button>
+      </div>
+    `, "small");
+    document.getElementById("room-form").addEventListener("submit", saveRoom);
+  }
+
+  async function saveRoom(event) {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const floor = form.get("floor");
+    const payload = {
+      code: slugCode(form.get("code")),
+      floor,
+      name: clean(form.get("name")),
+      short: clean(form.get("short")),
+      icon: floor === "5th Floor" ? "&#x1F3E5;" : "&#x2695;",
+      updated_at: new Date().toISOString()
+    };
+    if (!payload.name || !payload.short || !payload.code) return notify("Room name, short label, and code are required.");
+    if (!payload.code.startsWith(floor === "5th Floor" ? "5F-" : "3F-")) return notify(`Room code must start with ${floor === "5th Floor" ? "5F-" : "3F-"}.`);
+    if (ROOMS.some((room) => room.code === payload.code)) return notify("That room code already exists.");
+    const saved = await insertRecord(TABLES.rooms, payload, "created", "room");
+    if (saved) { closeModal(); await loadData(); navigate("floor", floor); }
+  }
+
+  async function softDeleteRequest(id) {
+    const request = findById(state.data.requests, id);
+    if (!request || !canDeleteRequest(request) || !confirm("Delete this request?")) return;
+    await updateRecord(TABLES.requests, id, { deleted_at: new Date().toISOString(), deleted_by: profileName(), updated_at: new Date().toISOString() }, "deleted", "request", request);
+    await loadData();
+    render();
+  }
+
+  async function softDeleteVr(id) {
+    const asset = findById(state.data.vr, id);
+    if (!asset || !canManageVr() || !confirm("Delete this VR headset record?")) return;
+    await updateRecord(TABLES.vr, id, { deleted_at: new Date().toISOString(), deleted_by: profileName(), updated_at: new Date().toISOString() }, "deleted", "VR asset", asset);
+    if (asset.inventory_item_id) {
+      const item = findById(state.data.inventory, asset.inventory_item_id);
+      if (item) await updateRecord(TABLES.inventory, item.id, { deleted_at: new Date().toISOString(), deleted_by: profileName(), last_updated: new Date().toISOString() }, "deleted", "inventory item", item, { movement: "VR asset deleted" });
+    }
+    await loadData();
+    render();
+  }
+
+  async function purgeSoftDeletes() {
+    if (!isAdmin() || !confirm("Permanently delete all soft-deleted records? This cannot be undone.")) return;
+    const deletedPieces = state.data.pieces.filter((piece) => piece.deleted_at);
+    const deletedVr = state.data.vr.filter((asset) => asset.deleted_at);
+    const deletedRequests = state.data.requests.filter((request) => request.deleted_at);
+    const deletedInventory = state.data.inventory.filter((item) => item.deleted_at);
+    for (const piece of deletedPieces) await hardDeleteRecord(TABLES.pieces, piece.id, "inventory piece", piece);
+    for (const asset of deletedVr) await hardDeleteRecord(TABLES.vr, asset.id, "VR asset", asset);
+    for (const request of deletedRequests) await hardDeleteRecord(TABLES.requests, request.id, "request", request);
+    for (const item of deletedInventory) await hardDeleteRecord(TABLES.inventory, item.id, "inventory item", item);
+    await loadData();
+    render();
+    notify("Soft-deleted records were permanently deleted.");
+  }
+
+  async function hardDeleteRecord(table, id, recordType, oldValue) {
+    if (state.supabase && state.dbReady) {
+      const { error } = await state.supabase.from(table).delete().eq("id", id);
+      if (error) return fail(error);
+    } else {
+      localDelete(table, id);
+    }
+    await logAudit("purged", recordType, id, oldValue || null, { purged: true, item_name: oldValue?.item_name, asset_tag: oldValue?.asset_tag, requester_name: oldValue?.requester_name, vr_number: oldValue?.vr_number });
+    return true;
+  }
+
+  function localDelete(table, id) {
+    const key = tableKey(table);
+    state.data[key] = state.data[key].filter((row) => row.id !== id);
+    saveLocalData();
+  }
+
+  function tableLabel(table) {
+    return ({
+      [TABLES.inventory]: "Inventory",
+      [TABLES.pieces]: "Inventory piece",
+      [TABLES.transactions]: "Transaction",
+      [TABLES.vr]: "VR registry",
+      [TABLES.requests]: "Request",
+      [TABLES.requestHistory]: "Request history",
+      [TABLES.audit]: "Audit log",
+      [TABLES.rooms]: "Room list"
+    })[table] || "Record";
+  }
+
+  function recordChangeMessage(action, recordType) {
+    const label = recordType ? recordType.charAt(0).toUpperCase() + recordType.slice(1) : "Record";
+    return `${label} ${action}.`;
+  }
+
+  function activeRequests() {
+    return (state.data.requests || []).filter((request) => !request.deleted_at);
+  }
+
+  function currentRequestType() {
+    if (state.view === "procurementRequests") return "Procurement";
+    return "Deployment";
+  }
+
+  function canManageRooms() {
+    return Boolean(state.authUser) && (isAdmin() || state.profile.role === "supply_officer");
+  }
+
+  function canDeleteRequest(request) {
+    return canManageRequests() || (canCreateRequest() && request.status === "Pending");
+  }
+
+  async function markApprovedDeploymentItems(request) {
+    const destination = clean(request.designation) || "approved deployment";
+    const duration = clean(request.deployment_duration);
+    const requester = clean(request.requester_name);
+    const note = `Deployed to ${destination}${duration ? ` for ${duration}` : ""}${requester ? `; requester: ${requester}` : ""}`;
+    for (const requestItem of parseRequestItems(request)) {
+      if (requestItem.inventory_piece_id) {
+        const piece = findPiece(requestItem.inventory_piece_id);
+        if (piece) await updateRecord(TABLES.pieces, piece.id, { remarks: appendUniqueRemark(piece.remarks, note), updated_at: new Date().toISOString() }, "edited", "inventory piece", piece, { movement: "Deployment approved" });
+        continue;
+      }
+      if (requestItem.inventory_item_id) {
+        const item = findById(state.data.inventory, requestItem.inventory_item_id);
+        if (item) await updateRecord(TABLES.inventory, item.id, { remarks: appendUniqueRemark(item.remarks, note), last_updated: new Date().toISOString() }, "edited", "inventory item", item, { movement: "Deployment approved" });
+      }
+    }
+  }
+
+  function appendUniqueRemark(current, note) {
+    const text = clean(current);
+    if (!note || text.includes(note)) return text;
+    return [text, note].filter(Boolean).join(" | ");
+  }
+
+  function scopedInventoryRow(item, roomCode) {
+    if (!roomCode || item.virtual_vr_asset) return item.room_code === roomCode ? item : null;
+    const pieces = inventoryPieces(item);
+    if (!pieces.length) return item.room_code === roomCode ? item : null;
+    const roomPieces = pieces.filter((piece) => (piece.current_room_code || item.room_code) === roomCode);
+    if (!roomPieces.length) return null;
+    const room = getRoom(roomCode);
+    return { ...item, _display_room_code: roomCode, _display_quantity: roomPieces.length, _visible_pieces: roomPieces, room_name: room?.name || item.room_name, floor_name: room?.floor || item.floor_name, location_detail: room?.name || item.location_detail };
+  }
+
+  function playNotificationSound() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      notificationAudioContext = notificationAudioContext || new AudioContext();
+      const ctx = notificationAudioContext;
+      if (ctx.state === "suspended") ctx.resume();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.17);
+    } catch (error) { console.warn(error); }
+  }
+
+  function escapeXml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[char]));
+  }
+  
 })();
