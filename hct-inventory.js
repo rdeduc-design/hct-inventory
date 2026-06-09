@@ -82,9 +82,11 @@
     }
   };
 
-  const app = document.getElementById("app");
+ const app = document.getElementById("app");
   const modalRoot = document.getElementById("modal-root");
   const toastEl = document.getElementById("toast");
+  let filterRenderTimer = null;
+  let notificationAudioContext = null;
 
   init();
 
