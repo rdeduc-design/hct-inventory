@@ -1680,7 +1680,8 @@
   function printDeploymentRequest(request) {
     if (!request) return;
     const items = parseRequestItems(request);
-    const logoUrl = new URL("hct-logo-navy.png", location.href).href;
+    const logoUrl = new URL("hct-logo-teal.png", location.href).href;
+    const requesterAllCaps = (request.requester_name || "").toUpperCase();
     const win = window.open("", "_blank");
     if (!win) return notify("Allow popups to print deployment reports.");
     win.document.write(`
@@ -1688,34 +1689,40 @@
       <style>
         body{font-family:Arial,sans-serif;margin:28px;color:#111}
         .sheet{width:760px;margin:0 auto}
-        .brand{display:flex;align-items:flex-end;gap:12px;margin:0 0 8px 0}
-        .brand img{width:172px;height:auto;object-fit:contain}
-        .brand .pipe{font-size:26px;color:#9ca3af;line-height:1}
+        .brand{display:flex;align-items:center;gap:10px;margin:0 0 6px 0}
+        .brand img{height:50px;width:auto;object-fit:contain}
+        .brand-name{font-size:38px;font-weight:700;color:#111;letter-spacing:-1px}
         .teal{height:31px;background:#46c1c6;color:#fff;font-size:18px;display:flex;align-items:center;padding-left:8px;margin:0 4px 20px}
-        h1{font-size:20px;text-align:center;margin:0 0 0;text-decoration:underline}
+        h1{font-size:20px;text-align:center;margin:16px 0 14px}
         .info,.assets{width:100%;border-collapse:collapse}
-        .info{margin-bottom:28px}
+        .info{margin-bottom:0}
         .info td{border:1px solid #111;padding:7px 7px;font-size:14px;width:50%}
         .assets th{background:#171b26;color:#fff;border:1px solid #111;padding:10px 8px;font-size:14px;text-align:center}
         .assets td{border:1px solid #111;height:31px;padding:7px 8px;font-size:14px;text-align:center}
         .assets td:nth-child(2){text-align:left}
         .ack{width:520px;margin:36px auto 44px;font-size:14px;line-height:1.75;text-align:justify}
         .signatures{width:540px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;column-gap:98px;row-gap:42px;text-align:center;font-size:14px}
-        .sig:before{content:"";display:block;border-top:1px solid #111;margin-bottom:7px}
+        .sig .printed-name{display:block;min-height:18px;margin-bottom:5px;font-weight:700}
+        .sig .line{display:block;border-top:1px solid #111;margin-bottom:7px}
         @media print{body{margin:18px}.sheet{width:100%}}
       </style></head><body><div class="sheet">
-      <div class="brand"><img src="${logoUrl}" alt="HCT"><span class="pipe">|</span></div>
+      <div class="brand"><img src="${logoUrl}" alt="HCT"><span class="brand-name">HCT</span></div>
       <div class="teal">How Care Transforms</div>
-      <h1>Employee Accountability Form</h1>
       <table class="info">
         <tr><td>Name: ${escapeHtml(request.requester_name || "")}</td><td>Department: ${escapeHtml(request.department_program || "")}</td></tr>
         <tr><td>Position: ${escapeHtml(request.position || "")}</td><td>Date: ${escapeHtml(dateOnly(request.date_requested))}</td></tr>
         <tr><td>Designation: ${escapeHtml(request.designation || "")}</td><td>Immediate Superior: ${escapeHtml(request.immediate_superior || "")}</td></tr>
       </table>
+      <h1>Employee Accountability Form</h1>
       <table class="assets"><thead><tr><th>Asset I.D</th><th>Item</th><th>Quantity</th><th>Serial Number</th></tr></thead>
       <tbody>${items.concat(Array(Math.max(0, 2 - items.length)).fill({})).map((item) => `<tr><td>${escapeHtml(item.asset_tag || "")}</td><td>${escapeHtml(item.item_name || "")}</td><td>${item.quantity ? Number(item.quantity || 0) : ""}</td><td>${escapeHtml(item.serial_number || "")}</td></tr>`).join("")}</tbody></table>
-      <p class="ack">This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT Management | HR.</p>
-      <div class="signatures"><div class="sig">Issued by | Admin Assistant</div><div class="sig">Conforme | Signature over Printed Name</div><div class="sig">Security Guard on Duty</div><div class="sig">Approved By</div></div>
+      <p class="ack">This is to acknowledge that I am accountable for the above listed items. I understand that I will pay or replace the same unit/or in any exact amount in-case of loss or damage due to my fault or negligence. In case of resignation, separation or transfer, I will turnover these items before issuance of my clearance. For any additional software protected with license installed that do not appear on the list above, or do not have any supporting document(s) coming from the company, it is my responsibility and obligation to properly handle and not to disclose any of company resources, comply with the set rules and regulations by any authority within the organization or imposed by the IT | Management | HR.</p>
+      <div class="signatures">
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Issued by | Admin Assistant</div>
+        <div class="sig"><span class="printed-name">${escapeHtml(requesterAllCaps)}</span><span class="line"></span>Conforme | Signature over Printed Name</div>
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Security Guard on Duty</div>
+        <div class="sig"><span class="printed-name"></span><span class="line"></span>Approved By</div>
+      </div>
       </div><script>print()</script></body></html>
     `);
     win.document.close();
