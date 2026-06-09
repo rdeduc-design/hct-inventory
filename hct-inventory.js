@@ -266,6 +266,7 @@
         notify(`${tableLabel(table)} updated.`);
         loadData().then(() => render({ restoreFilterFocus: true }));
       });
+    });
     state.channel = channel.subscribe();
   }
 
