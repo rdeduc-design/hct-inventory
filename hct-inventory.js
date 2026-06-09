@@ -1389,7 +1389,6 @@
     const requestType = request?.request_type || defaultType || currentRequestType() || "Deployment";
     const cartItems = !request && requestType === "Deployment" ? loadDeploymentCart() : [];
     const items = request ? parseRequestItems(request) : (cartItems.length ? cartItems : [{}]);
-    const items = parseRequestItems(request);
     openModal(`${request ? "Edit" : "New"} Request`, `
       <form id="request-form" class="modal-body">
         <div class="form-grid">
