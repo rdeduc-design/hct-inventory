@@ -937,13 +937,28 @@
     render();
   }
 
+  function approvedDeploymentRefs() {
+    const lockedPieceIds = new Set();
+    const lockedItemIds = new Set();
+    activeRequests()
+      .filter((r) => r.request_type !== "Procurement" && (r.status === "Approved" || r.status === "Released"))
+      .forEach((r) => {
+        parseRequestItems(r).forEach((item) => {
+          if (item.inventory_piece_id) lockedPieceIds.add(item.inventory_piece_id);
+          else if (item.inventory_item_id) lockedItemIds.add(item.inventory_item_id);
+        });
+      });
+    return { lockedPieceIds, lockedItemIds };
+  }
+
   function requestInventoryOptions() {
+    const { lockedPieceIds, lockedItemIds } = approvedDeploymentRefs();
     const options = [];
     activeInventory().forEach((inventoryItem) => {
       const linkedVr = state.data.vr.find((asset) => asset.inventory_item_id === inventoryItem.id);
       const pieces = inventoryPieces(inventoryItem);
       if (pieces.length) {
-        pieces.forEach((piece) => options.push({
+        pieces.filter((piece) => !lockedPieceIds.has(piece.id)).forEach((piece) => options.push({
           value: `piece:${piece.id}`,
           inventory_item_id: inventoryItem.id,
           inventory_piece_id: piece.id,
@@ -956,6 +971,7 @@
         return;
       }
       if (Number(inventoryItem.quantity || 0) <= 0) return;
+      if (lockedItemIds.has(inventoryItem.id)) return;
       options.push({
         value: `item:${inventoryItem.id}`,
         inventory_item_id: inventoryItem.id,
@@ -967,7 +983,9 @@
         room_code: inventoryItem.room_code
       });
     });
-    virtualVrInventoryRows().forEach((vrItem) => options.push({
+    virtualVrInventoryRows().forEach((vrItem) => {
+      if (lockedItemIds.has(vrItem.id) || lockedPieceIds.has(vrItem.inventory_piece_id)) return;
+      options.push({
       value: `vr:${vrItem.vr_asset_id}`,
       inventory_item_id: vrItem.id,
       inventory_piece_id: vrItem.inventory_piece_id || "",
@@ -976,7 +994,7 @@
       asset_tag: vrItem.asset_tag || "",
       serial_number: vrItem.serial_number || "",
       room_code: vrItem.room_code
-    }));
+    });
     return options.sort((a, b) => `${a.item_name} ${a.asset_tag}`.localeCompare(`${b.item_name} ${b.asset_tag}`));
   }
 
