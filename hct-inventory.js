@@ -986,14 +986,15 @@
     virtualVrInventoryRows().forEach((vrItem) => {
       if (lockedItemIds.has(vrItem.id) || lockedPieceIds.has(vrItem.inventory_piece_id)) return;
       options.push({
-      value: `vr:${vrItem.vr_asset_id}`,
-      inventory_item_id: vrItem.id,
-      inventory_piece_id: vrItem.inventory_piece_id || "",
-      item_name: vrItem.item_name,
-      quantity_available: 1,
-      asset_tag: vrItem.asset_tag || "",
-      serial_number: vrItem.serial_number || "",
-      room_code: vrItem.room_code
+        value: `vr:${vrItem.vr_asset_id}`,
+        inventory_item_id: vrItem.id,
+        inventory_piece_id: vrItem.inventory_piece_id || "",
+        item_name: vrItem.item_name,
+        quantity_available: 1,
+        asset_tag: vrItem.asset_tag || "",
+        serial_number: vrItem.serial_number || "",
+        room_code: vrItem.room_code
+      });
     });
     return options.sort((a, b) => `${a.item_name} ${a.asset_tag}`.localeCompare(`${b.item_name} ${b.asset_tag}`));
   }
