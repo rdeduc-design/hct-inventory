@@ -994,7 +994,7 @@
       asset_tag: vrItem.asset_tag || "",
       serial_number: vrItem.serial_number || "",
       room_code: vrItem.room_code
-    }));
+    });
     return options.sort((a, b) => `${a.item_name} ${a.asset_tag}`.localeCompare(`${b.item_name} ${b.asset_tag}`));
   }
 
