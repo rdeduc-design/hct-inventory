@@ -278,7 +278,7 @@
       ${topbar()}
       <main class="page">
         ${state.loading ? "" : breadcrumbNav()}
-        ${state.loading ? emptyState("Loading inventory system", "Fetching shared records.") : route()}
+        ${state.loading ? loadingState("Loading inventory system", "Fetching shared records.") : route()}
       </main>
     `;
     bindGlobalEvents();
@@ -1710,7 +1710,11 @@
   }
 
   function closeModal() {
-    modalRoot.innerHTML = "";
+    const backdrop = modalRoot.querySelector(".modal-backdrop");
+    if (!backdrop) return;
+    backdrop.classList.add("closing");
+    backdrop.querySelector(".modal")?.classList.add("closing");
+    setTimeout(() => { modalRoot.innerHTML = ""; }, 200);
   }
 
   function exportView(kind) {
@@ -2178,6 +2182,10 @@ function syncRooms() {
     return `<div class="empty"><div><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span></div></div>`;
   }
 
+  function loadingState(title, text) {
+    return `<div class="empty"><div><div class="spinner"></div><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span></div></div>`;
+  }
+
   function optionHtml(options, selected, labeler) {
     return options.map((option) => {
       const value = Array.isArray(option) ? option[0] : option;
@@ -2246,8 +2254,10 @@ function syncRooms() {
   }
 
   function toggleTheme() {
-    document.body.classList.toggle("dark");
-    localStorage.setItem("hct-theme", document.body.classList.contains("dark") ? "dark" : "light");
+    const isDark = document.body.classList.toggle("dark");
+    localStorage.setItem("hct-theme", isDark ? "dark" : "light");
+    const logo = app.querySelector(".brand-logo");
+    if (logo) logo.src = isDark ? "hct-logo-teal.png" : "hct-logo-navy.png";
   }
 
   function notify(message) {
