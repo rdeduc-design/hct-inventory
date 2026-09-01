@@ -1722,15 +1722,46 @@
     notify("Excel export created.");
   }
 
+  function pdfTitleFor(kind) {
+    if (kind === "vr") return { title: "VR Asset Registry Report", subtitle: "Meta Quest 3 headset tracking by VR number, serial, and room" };
+    if (kind === "requests") {
+      const type = currentRequestType();
+      return { title: `${type} Requests Report`, subtitle: type === "Deployment" ? "Employee deployment requests" : "Procurement requests for new items" };
+    }
+    if (kind === "audit") return { title: "Audit Log Report", subtitle: "System changes and record history" };
+    if (kind === "inventory") {
+      const room = state.view === "room" ? getRoom(state.viewArg) : null;
+      return { title: "Inventory Report", subtitle: room ? `${room.name} - ${room.floor}` : "All Rooms" };
+    }
+    return { title: "Summary Report", subtitle: "" };
+  }
+
   function exportPdf(kind) {
     const rows = exportRows(kind);
     if (!rows.length) return notify("Nothing to export yet.");
+    const { title, subtitle } = pdfTitleFor(kind);
+    const logoUrl = new URL("hct-logo-navy.png", location.href).href;
+    const [head, ...body] = rows;
     const win = window.open("", "_blank");
     if (!win) return notify("Allow popups to print PDF.");
-    win.document.write(`<html><head><title>HCT ${kind}</title><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px;font-size:12px}</style></head><body><h1>HCT ${kind}</h1><table>${rows.map((row, index) => {
-      const tag = index ? "td" : "th";
-      return `<tr>${row.map((cell) => `<${tag}>${escapeHtml(String(cell ?? ""))}</${tag}>`).join("")}</tr>`;
-    }).join("")}</table><script>print()</script></body></html>`);
+    win.document.write(`
+      <html><head><title>HCT Institute - ${escapeHtml(title)}</title>
+      <style>
+        body{font-family:Arial,sans-serif;margin:28px;color:#14213d}
+        header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #46c1c6;padding-bottom:14px;margin-bottom:18px}
+        header img{width:62px;height:62px;object-fit:contain} h1{margin:0;font-size:24px} p{margin:4px 0;color:#52616b}
+        table{width:100%;border-collapse:collapse} th,td{border:1px solid #cfd8dc;padding:8px;text-align:left;font-size:12px} th{background:#eefafa;color:#14213d}
+        tbody tr:nth-child(even){background:#f7fbfb}
+        footer{margin-top:22px;font-size:11px;color:#8a978f;text-align:center}
+        @media print{body{margin:18px}}
+      </style></head><body>
+      <header><img src="${logoUrl}" alt="HCT Institute"><div><h1>HCT Institute ${escapeHtml(title)}</h1>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}<p>Printed ${escapeHtml(new Date().toLocaleString())}</p></div></header>
+      <table>
+        <thead><tr>${head.map((cell) => `<th>${escapeHtml(String(cell ?? ""))}</th>`).join("")}</tr></thead>
+        <tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${head.length}">No records found.</td></tr>`}</tbody>
+      </table>
+      <footer>How Care Transforms &middot; HCT Institute Inventory Management</footer>
+      <script>print()<\/script></body></html>`);
     win.document.close();
     logAudit("exported", kind, kind, null, { rows: rows.length, format: "pdf" });
   }
