@@ -1718,7 +1718,6 @@
     if (!rows.length) return notify("Nothing to export yet.");
     const html = `<table>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`).join("")}</tr>`).join("")}</table>`;
     downloadBlob(`${kind}-${today()}.xls`, html, "application/vnd.ms-excel");
-    logAudit("exported", kind, kind, null, { rows: rows.length });
     notify("Excel export created.");
   }
 
@@ -1763,7 +1762,6 @@
       <footer>How Care Transforms &middot; HCT Institute Inventory Management</footer>
       <script>print()<\/script></body></html>`);
     win.document.close();
-    logAudit("exported", kind, kind, null, { rows: rows.length, format: "pdf" });
   }
 
   function printRoomReport(roomCode) {
@@ -1786,7 +1784,6 @@
       <script>print()</script></body></html>
     `);
     win.document.close();
-    logAudit("exported", "room report", roomCode, null, { room: room?.name || roomCode, rows: rows.length, format: "print" });
   }
 
   function printDeploymentRequest(request) {
@@ -1838,7 +1835,6 @@
       </div><script>print()</script></body></html>
     `);
     win.document.close();
-    logAudit("exported", "deployment request", request.id, null, { rows: items.length, format: "print" });
   }
 
   function exportRows(kind) {
